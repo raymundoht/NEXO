@@ -17,6 +17,34 @@ async function ensureDir() {
   }
 }
 
+/**
+ * Resolve a stored branding URL to a safe absolute path.
+ * Returns null if the path escapes the branding upload directory.
+ */
+function resolveBrandingPath(publicUrl: string): string | null {
+  const normalized = publicUrl.replace(/\\/g, "/");
+  if (!normalized.startsWith("/uploads/branding/")) {
+    return null;
+  }
+
+  const resolved = path.resolve(process.cwd(), "public", `.${normalized}`);
+  const uploadRoot = `${path.resolve(UPLOAD_DIR)}${path.sep}`;
+  return resolved.startsWith(uploadRoot) ? resolved : null;
+}
+
+/**
+ * Safely delete a previously uploaded branding file.
+ * Refuses to unlink paths outside the branding directory.
+ */
+async function deleteBrandingFile(publicUrl: string | null | undefined) {
+  if (!publicUrl) return;
+
+  const safePath = resolveBrandingPath(publicUrl);
+  if (safePath && existsSync(safePath)) {
+    await unlink(safePath).catch(() => {});
+  }
+}
+
 export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
@@ -62,12 +90,7 @@ export async function POST(request: Request) {
     });
 
     const oldUrl = type === "favicon" ? settings.faviconUrl : settings.logoUrl;
-    if (oldUrl) {
-      const oldPath = path.join(process.cwd(), "public", oldUrl);
-      if (existsSync(oldPath)) {
-        await unlink(oldPath).catch(() => {});
-      }
-    }
+    await deleteBrandingFile(oldUrl);
 
     await db.businessSettings.update({
       where: { id: 1 },
@@ -105,12 +128,7 @@ export async function DELETE(request: Request) {
     });
 
     const oldUrl = type === "favicon" ? settings.faviconUrl : settings.logoUrl;
-    if (oldUrl) {
-      const oldPath = path.join(process.cwd(), "public", oldUrl);
-      if (existsSync(oldPath)) {
-        await unlink(oldPath).catch(() => {});
-      }
-    }
+    await deleteBrandingFile(oldUrl);
 
     await db.businessSettings.update({
       where: { id: 1 },

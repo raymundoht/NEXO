@@ -70,8 +70,7 @@ const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
     "dashboard.read",
     "pos.sell",
     "sales.read",
-    "cash.manage",
-    "settings.appearance"
+    "cash.manage"
   ])
 };
 

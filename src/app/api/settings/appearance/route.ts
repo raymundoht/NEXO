@@ -18,9 +18,7 @@ const appearanceSchema = z.object({
   borderRadius: z.enum(["none", "sm", "md", "lg", "xl"]).optional(),
   fontSize: z.enum(["xs", "sm", "md", "lg"]).optional(),
   fontFamily: z.enum(["poppins", "inter", "roboto", "nunito"]).optional(),
-  density: z.enum(["compact", "normal", "comfortable"]).optional(),
-  logoUrl: z.string().max(500).optional().nullable(),
-  faviconUrl: z.string().max(500).optional().nullable()
+  density: z.enum(["compact", "normal", "comfortable"]).optional()
 });
 
 export async function GET() {
