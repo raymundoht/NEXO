@@ -1,0 +1,147 @@
+import { Prisma, ProductStatus } from "@prisma/client";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import {
+  getPagination,
+  jsonError,
+  jsonOk,
+  readJson
+} from "@/lib/api";
+import {
+  requireAnyPermission,
+  requirePermission,
+  requestMetadata
+} from "@/lib/auth";
+import { audit } from "@/lib/audit";
+import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
+import { can } from "@/lib/permissions";
+
+const productSchema = z.object({
+  sku: z.string().trim().min(1).max(80),
+  barcode: z.string().trim().max(80).optional().nullable(),
+  name: z.string().trim().min(2).max(200),
+  description: z.string().trim().max(2000).optional().nullable(),
+  unit: z.string().trim().min(1).max(20).default("PZA"),
+  categoryId: z.string().uuid().optional().nullable(),
+  cost: z.coerce.number().min(0).max(1_000_000_000),
+  salePrice: z.coerce.number().min(0).max(1_000_000_000),
+  taxRate: z.coerce.number().min(0).max(100).default(16),
+  minStock: z.coerce.number().min(0).max(1_000_000),
+  maxStock: z.coerce.number().min(0).max(1_000_000).optional().nullable(),
+  allowNegative: z.boolean().default(false)
+});
+
+export async function GET(request: Request) {
+  try {
+    const user = await requireAnyPermission(["inventory.read", "pos.sell"]);
+    const { searchParams } = new URL(request.url);
+    const { page, pageSize, skip, take } = getPagination(request.url, 500);
+    const q = searchParams.get("q")?.trim().slice(0, 100);
+    const alert = searchParams.get("alert");
+    const status = searchParams.get("status") as ProductStatus | null;
+
+    const where: Prisma.ProductWhereInput = {
+      ...(status && Object.values(ProductStatus).includes(status)
+        ? { status }
+        : { status: ProductStatus.ACTIVE }),
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { sku: { contains: q, mode: "insensitive" } },
+              { barcode: { contains: q, mode: "insensitive" } }
+            ]
+          }
+        : {})
+    };
+
+    const [items, total] = await db.$transaction([
+      db.product.findMany({
+        where,
+        include: { category: { select: { id: true, name: true } } },
+        orderBy: { name: "asc" },
+        skip,
+        take
+      }),
+      db.product.count({ where })
+    ]);
+
+    const filtered =
+      alert === "low"
+        ? items.filter((item) => item.currentStock.lte(item.minStock))
+        : alert === "high"
+          ? items.filter(
+              (item) => item.maxStock && item.currentStock.gte(item.maxStock)
+            )
+          : items;
+
+    const canReadInventory = can(user.role, "inventory.read");
+    return jsonOk({
+      items: filtered.map((item) => {
+        const stockAlert = item.currentStock.lte(item.minStock)
+          ? "LOW"
+          : item.maxStock && item.currentStock.gte(item.maxStock)
+            ? "HIGH"
+            : null;
+        if (canReadInventory) return { ...item, stockAlert };
+        return {
+          id: item.id,
+          sku: item.sku,
+          barcode: item.barcode,
+          name: item.name,
+          unit: item.unit,
+          status: item.status,
+          salePrice: item.salePrice,
+          taxRate: item.taxRate,
+          currentStock: item.currentStock,
+          stockAlert
+        };
+      }),
+      pagination: { page, pageSize, total }
+    });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    assertTrustedOrigin(request);
+    const user = await requirePermission("inventory.write");
+    const input = productSchema.parse(await readJson(request));
+    if (input.maxStock != null && input.maxStock < input.minStock) {
+      throw new z.ZodError([
+        {
+          code: "custom",
+          path: ["maxStock"],
+          message: "El máximo no puede ser menor al mínimo."
+        }
+      ]);
+    }
+
+    const product = await db.product.create({
+      data: {
+        ...input,
+        sku: input.sku.toUpperCase(),
+        barcode: input.barcode || null,
+        name: sanitizeText(input.name, 200),
+        description: input.description
+          ? sanitizeText(input.description, 2000)
+          : null,
+        currentStock: new Prisma.Decimal(0)
+      }
+    });
+    const metadata = await requestMetadata();
+    await audit({
+      userId: user.id,
+      action: "PRODUCT_CREATED",
+      entityType: "Product",
+      entityId: product.id,
+      ip: metadata.ip,
+      metadata: { sku: product.sku }
+    });
+    return jsonOk(product, 201);
+  } catch (error) {
+    return jsonError(error);
+  }
+}

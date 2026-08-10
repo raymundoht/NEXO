@@ -1,0 +1,731 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  WAREHOUSE
+  BUYER
+  CASHIER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_APPROVAL
+  REJECTED
+  DISABLED
+}
+
+enum PaymentAttemptStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  REVIEW_REQUIRED
+}
+
+enum WebhookProcessingStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  ERROR
+  RETRY_REQUIRED
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum InventoryCountStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum StockMovementType {
+  PURCHASE_RECEIPT
+  SALE
+  REFUND
+  INVENTORY_ADJUSTMENT
+  MANUAL_ADJUSTMENT
+}
+
+enum SaleStatus {
+  HELD
+  COMPLETED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+}
+
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  OPENING
+  SALE
+  REFUND
+  CASH_IN
+  CASH_OUT
+  CLOSING
+}
+
+model User {
+  id                  String     @id @default(uuid()) @db.Uuid
+  email               String     @unique @db.VarChar(320)
+  name                String     @db.VarChar(160)
+  passwordHash        String     @map("password_hash")
+  role                Role
+  status              UserStatus @default(ACTIVE)
+  failedLoginAttempts Int        @default(0) @map("failed_login_attempts")
+  firstFailedAt       DateTime?  @map("first_failed_at") @db.Timestamptz(3)
+  lockedUntil         DateTime?  @map("locked_until") @db.Timestamptz(3)
+  avatarSeed          String?    @map("avatar_seed") @db.VarChar(50)
+  lastLoginAt         DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  purchaseOrders      PurchaseOrder[]      @relation("PurchaseBuyer")
+  receipts            PurchaseReceipt[]    @relation("ReceiptUser")
+  stockMovements      StockMovement[]
+  inventoryCounts     InventoryCount[]
+  completedCounts     InventoryCount[]     @relation("CountCompletedBy")
+  sales               Sale[]               @relation("SaleCashier")
+  refunds             Refund[]             @relation("RefundApprover")
+  cashSessions        CashSession[]
+  cashMovements       CashMovement[]
+  auditLogs           AuditLog[]
+  paymentAttempts     PaymentAttempt[]     @relation("PaymentCashier")
+  paymentRefunds      PaymentRefund[]      @relation("PaymentRefundRequester")
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.Char(64)
+  userId     String    @map("user_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  ipHash     String?   @map("ip_hash") @db.Char(64)
+  userAgent  String?   @map("user_agent") @db.VarChar(500)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model AuthAttempt {
+  id              BigInt   @id @default(autoincrement())
+  normalizedEmail String   @map("normalized_email") @db.VarChar(320)
+  ipHash          String?  @map("ip_hash") @db.Char(64)
+  success         Boolean
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([normalizedEmail, createdAt])
+  @@index([ipHash, createdAt])
+  @@map("auth_attempts")
+}
+
+model RegistrationVerification {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(320)
+  name         String   @db.VarChar(160)
+  passwordHash String   @map("password_hash")
+  codeHash     String   @map("code_hash") @db.Char(64)
+  role         Role     @default(CASHIER)
+  attempts     Int      @default(0)
+  ipHash       String?  @map("ip_hash") @db.Char(64)
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(3)
+  resendAt     DateTime @map("resend_at") @db.Timestamptz(3)
+  lastSentAt   DateTime @default(now()) @map("last_sent_at") @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@index([ipHash, lastSentAt])
+  @@map("registration_verifications")
+}
+
+model Category {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @unique @db.VarChar(120)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  products  Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id            String        @id @default(uuid()) @db.Uuid
+  sku           String        @unique @db.VarChar(80)
+  barcode       String?       @unique @db.VarChar(80)
+  name          String        @db.VarChar(200)
+  description   String?       @db.Text
+  unit          String        @default("PZA") @db.VarChar(20)
+  categoryId    String?       @map("category_id") @db.Uuid
+  status        ProductStatus @default(ACTIVE)
+  cost          Decimal       @default(0) @db.Decimal(14, 4)
+  salePrice     Decimal       @map("sale_price") @db.Decimal(14, 4)
+  taxRate       Decimal       @default(16) @map("tax_rate") @db.Decimal(5, 2)
+  currentStock  Decimal       @default(0) @map("current_stock") @db.Decimal(14, 3)
+  minStock      Decimal       @default(0) @map("min_stock") @db.Decimal(14, 3)
+  maxStock      Decimal?      @map("max_stock") @db.Decimal(14, 3)
+  allowNegative Boolean       @default(false) @map("allow_negative")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  category          Category?             @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  supplierPrices    SupplierProduct[]
+  purchaseItems     PurchaseOrderItem[]
+  receiptItems      PurchaseReceiptItem[]
+  stockMovements    StockMovement[]
+  countItems        InventoryCountItem[]
+  saleItems         SaleItem[]
+  refundItems       RefundItem[]
+  stockReservations StockReservation[]
+
+  @@index([name])
+  @@index([status, currentStock])
+  @@map("products")
+}
+
+model Supplier {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique @db.VarChar(40)
+  legalName    String   @map("legal_name") @db.VarChar(200)
+  tradeName    String?  @map("trade_name") @db.VarChar(200)
+  taxId        String?  @map("tax_id") @db.VarChar(30)
+  email        String?  @db.VarChar(320)
+  phone        String?  @db.VarChar(40)
+  contactName  String?  @map("contact_name") @db.VarChar(160)
+  address      String?  @db.Text
+  creditDays   Int      @default(0) @map("credit_days")
+  deliveryDays Int      @default(0) @map("delivery_days")
+  creditLimit  Decimal? @map("credit_limit") @db.Decimal(14, 2)
+  paymentTerms String?  @map("payment_terms") @db.VarChar(300)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  productPrices  SupplierProduct[]
+  purchaseOrders PurchaseOrder[]
+
+  @@index([legalName])
+  @@map("suppliers")
+}
+
+model SupplierProduct {
+  id            String   @id @default(uuid()) @db.Uuid
+  supplierId    String   @map("supplier_id") @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  supplierSku   String?  @map("supplier_sku") @db.VarChar(80)
+  referenceCost Decimal  @map("reference_cost") @db.Decimal(14, 4)
+  currency      String   @default("MXN") @db.Char(3)
+  leadDays      Int      @default(0) @map("lead_days")
+  isPreferred   Boolean  @default(false) @map("is_preferred")
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, productId])
+  @@index([productId])
+  @@map("supplier_products")
+}
+
+model PurchaseOrder {
+  id           String              @id @default(uuid()) @db.Uuid
+  folio        String              @unique @db.VarChar(40)
+  supplierId   String              @map("supplier_id") @db.Uuid
+  buyerId      String              @map("buyer_id") @db.Uuid
+  status       PurchaseOrderStatus @default(DRAFT)
+  currency     String              @default("MXN") @db.Char(3)
+  exchangeRate Decimal             @default(1) @map("exchange_rate") @db.Decimal(14, 6)
+  subtotal     Decimal             @db.Decimal(14, 2)
+  taxTotal     Decimal             @map("tax_total") @db.Decimal(14, 2)
+  total        Decimal             @db.Decimal(14, 2)
+  expectedAt   DateTime?           @map("expected_at") @db.Date
+  notes        String?             @db.Text
+  sentAt       DateTime?           @map("sent_at") @db.Timestamptz(3)
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  buyer    User                @relation("PurchaseBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  items    PurchaseOrderItem[]
+  receipts PurchaseReceipt[]
+
+  @@index([supplierId, createdAt])
+  @@index([status, expectedAt])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id               String  @id @default(uuid()) @db.Uuid
+  purchaseOrderId  String  @map("purchase_order_id") @db.Uuid
+  productId        String  @map("product_id") @db.Uuid
+  quantityOrdered  Decimal @map("quantity_ordered") @db.Decimal(14, 3)
+  quantityReceived Decimal @default(0) @map("quantity_received") @db.Decimal(14, 3)
+  unitCost         Decimal @map("unit_cost") @db.Decimal(14, 4)
+  taxRate          Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal     Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  lineTax          Decimal @map("line_tax") @db.Decimal(14, 2)
+  lineTotal        Decimal @map("line_total") @db.Decimal(14, 2)
+
+  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
+  receiptItems  PurchaseReceiptItem[]
+
+  @@unique([purchaseOrderId, productId])
+  @@index([productId])
+  @@map("purchase_order_items")
+}
+
+model PurchaseReceipt {
+  id               String   @id @default(uuid()) @db.Uuid
+  receiptNumber    String   @unique @map("receipt_number") @db.VarChar(40)
+  purchaseOrderId  String   @map("purchase_order_id") @db.Uuid
+  receivedById     String   @map("received_by_id") @db.Uuid
+  supplierDocument String?  @map("supplier_document") @db.VarChar(100)
+  notes            String?  @db.Text
+  receivedAt       DateTime @default(now()) @map("received_at") @db.Timestamptz(3)
+
+  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  receivedBy    User                  @relation("ReceiptUser", fields: [receivedById], references: [id], onDelete: Restrict)
+  items         PurchaseReceiptItem[]
+
+  @@index([purchaseOrderId, receivedAt])
+  @@map("purchase_receipts")
+}
+
+model PurchaseReceiptItem {
+  id                  String  @id @default(uuid()) @db.Uuid
+  receiptId           String  @map("receipt_id") @db.Uuid
+  purchaseOrderItemId String  @map("purchase_order_item_id") @db.Uuid
+  productId           String  @map("product_id") @db.Uuid
+  quantity            Decimal @db.Decimal(14, 3)
+  unitCost            Decimal @map("unit_cost") @db.Decimal(14, 4)
+
+  receipt           PurchaseReceipt   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+  product           Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([receiptId, purchaseOrderItemId])
+  @@index([productId])
+  @@map("purchase_receipt_items")
+}
+
+model StockMovement {
+  id            BigInt            @id @default(autoincrement())
+  productId     String            @map("product_id") @db.Uuid
+  userId        String            @map("user_id") @db.Uuid
+  type          StockMovementType
+  quantity      Decimal           @db.Decimal(14, 3)
+  stockBefore   Decimal           @map("stock_before") @db.Decimal(14, 3)
+  stockAfter    Decimal           @map("stock_after") @db.Decimal(14, 3)
+  unitCost      Decimal?          @map("unit_cost") @db.Decimal(14, 4)
+  referenceType String?           @map("reference_type") @db.VarChar(50)
+  referenceId   String?           @map("reference_id") @db.VarChar(80)
+  reason        String?           @db.VarChar(300)
+  idempotencyKey String?          @unique @map("idempotency_key") @db.VarChar(100)
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([productId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+model InventoryCount {
+  id            String               @id @default(uuid()) @db.Uuid
+  folio         String               @unique @db.VarChar(40)
+  status        InventoryCountStatus @default(DRAFT)
+  createdById   String               @map("created_by_id") @db.Uuid
+  completedById String?              @map("completed_by_id") @db.Uuid
+  notes         String?              @db.Text
+  startedAt     DateTime?            @map("started_at") @db.Timestamptz(3)
+  completedAt   DateTime?            @map("completed_at") @db.Timestamptz(3)
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  createdBy   User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  completedBy User?                @relation("CountCompletedBy", fields: [completedById], references: [id], onDelete: Restrict)
+  items       InventoryCountItem[]
+
+  @@index([status, createdAt])
+  @@map("inventory_counts")
+}
+
+model InventoryCountItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  inventoryCountId String   @map("inventory_count_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  systemQuantity   Decimal  @map("system_quantity") @db.Decimal(14, 3)
+  countedQuantity  Decimal? @map("counted_quantity") @db.Decimal(14, 3)
+  difference       Decimal? @db.Decimal(14, 3)
+  notes            String?  @db.VarChar(300)
+
+  inventoryCount InventoryCount @relation(fields: [inventoryCountId], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([inventoryCountId, productId])
+  @@index([productId])
+  @@map("inventory_count_items")
+}
+
+model CashRegister {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @db.VarChar(40)
+  name      String   @db.VarChar(120)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  sessions        CashSession[]
+  sales           Sale[]
+  paymentAttempts PaymentAttempt[]
+
+  @@map("cash_registers")
+}
+
+model CashSession {
+  id                    String            @id @default(uuid()) @db.Uuid
+  cashRegisterId        String            @map("cash_register_id") @db.Uuid
+  cashierId             String            @map("cashier_id") @db.Uuid
+  status                CashSessionStatus @default(OPEN)
+  currency              String            @default("MXN") @db.Char(3)
+  openingAmount         Decimal           @map("opening_amount") @db.Decimal(14, 2)
+  expectedClosingAmount Decimal?          @map("expected_closing_amount") @db.Decimal(14, 2)
+  countedClosingAmount  Decimal?          @map("counted_closing_amount") @db.Decimal(14, 2)
+  difference            Decimal?          @db.Decimal(14, 2)
+  openingDenominations  Json?             @map("opening_denominations")
+  closingDenominations  Json?             @map("closing_denominations")
+  openedAt              DateTime          @default(now()) @map("opened_at") @db.Timestamptz(3)
+  closedAt              DateTime?         @map("closed_at") @db.Timestamptz(3)
+  notes                 String?           @db.Text
+
+  cashRegister    CashRegister     @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+  cashier         User             @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  movements       CashMovement[]
+  sales           Sale[]
+  paymentAttempts PaymentAttempt[]
+
+  @@index([cashRegisterId, status])
+  @@index([cashierId, openedAt])
+  @@map("cash_sessions")
+}
+
+model CashMovement {
+  id            BigInt           @id @default(autoincrement())
+  cashSessionId String           @map("cash_session_id") @db.Uuid
+  userId        String           @map("user_id") @db.Uuid
+  type          CashMovementType
+  amount        Decimal          @db.Decimal(14, 2)
+  currency      String           @default("MXN") @db.Char(3)
+  referenceType String?          @map("reference_type") @db.VarChar(50)
+  referenceId   String?          @map("reference_id") @db.VarChar(80)
+  notes         String?          @db.VarChar(300)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  cashSession CashSession @relation(fields: [cashSessionId], references: [id], onDelete: Restrict)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([cashSessionId, createdAt])
+  @@map("cash_movements")
+}
+
+model Sale {
+  id                String         @id @default(uuid()) @db.Uuid
+  folio             String         @unique @db.VarChar(40)
+  cashRegisterId    String?        @map("cash_register_id") @db.Uuid
+  cashSessionId     String?        @map("cash_session_id") @db.Uuid
+  cashierId         String         @map("cashier_id") @db.Uuid
+  status            SaleStatus     @default(COMPLETED)
+  customerName      String?        @map("customer_name") @db.VarChar(160)
+  currency          String         @default("MXN") @db.Char(3)
+  exchangeRate      Decimal        @default(1) @map("exchange_rate") @db.Decimal(14, 6)
+  subtotal          Decimal        @db.Decimal(14, 2)
+  discountTotal     Decimal        @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal          Decimal        @map("tax_total") @db.Decimal(14, 2)
+  total             Decimal        @db.Decimal(14, 2)
+  paymentMethod     PaymentMethod? @map("payment_method")
+  amountTendered    Decimal?       @map("amount_tendered") @db.Decimal(14, 2)
+  changeAmount      Decimal?       @map("change_amount") @db.Decimal(14, 2)
+  cardAuthorization String?        @map("card_authorization") @db.VarChar(80)
+  notes             String?        @db.Text
+  heldAt            DateTime?      @map("held_at") @db.Timestamptz(3)
+  completedAt       DateTime?      @map("completed_at") @db.Timestamptz(3)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  cashRegister    CashRegister?    @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+  cashSession     CashSession?     @relation(fields: [cashSessionId], references: [id], onDelete: Restrict)
+  cashier         User             @relation("SaleCashier", fields: [cashierId], references: [id], onDelete: Restrict)
+  items           SaleItem[]
+  refunds         Refund[]
+  paymentAttempts PaymentAttempt[]
+  paymentRefunds  PaymentRefund[]
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([cashierId, createdAt])
+  @@map("sales")
+}
+
+model SaleItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  saleId         String  @map("sale_id") @db.Uuid
+  productId      String  @map("product_id") @db.Uuid
+  skuSnapshot    String  @map("sku_snapshot") @db.VarChar(80)
+  nameSnapshot   String  @map("name_snapshot") @db.VarChar(200)
+  quantity       Decimal @db.Decimal(14, 3)
+  unitPrice      Decimal @map("unit_price") @db.Decimal(14, 4)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(14, 2)
+  taxRate        Decimal @map("tax_rate") @db.Decimal(5, 2)
+  lineSubtotal   Decimal @map("line_subtotal") @db.Decimal(14, 2)
+  lineTax        Decimal @map("line_tax") @db.Decimal(14, 2)
+  lineTotal      Decimal @map("line_total") @db.Decimal(14, 2)
+
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  refundItems RefundItem[]
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model Refund {
+  id                String   @id @default(uuid()) @db.Uuid
+  folio             String   @unique @db.VarChar(40)
+  saleId            String   @map("sale_id") @db.Uuid
+  approvedById      String   @map("approved_by_id") @db.Uuid
+  amount            Decimal  @db.Decimal(14, 2)
+  reason            String   @db.VarChar(300)
+  authorizationCode String?  @map("authorization_code") @db.VarChar(80)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  sale       Sale         @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  approvedBy User         @relation("RefundApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  items      RefundItem[]
+
+  @@index([saleId, createdAt])
+  @@map("refunds")
+}
+
+model RefundItem {
+  id         String  @id @default(uuid()) @db.Uuid
+  refundId   String  @map("refund_id") @db.Uuid
+  saleItemId String  @map("sale_item_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  quantity   Decimal @db.Decimal(14, 3)
+  amount     Decimal @db.Decimal(14, 2)
+
+  refund   Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  saleItem SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([refundId, saleItemId])
+  @@index([productId])
+  @@map("refund_items")
+}
+
+model BusinessSettings {
+  id                     Int      @id @default(1)
+  businessName           String   @default("NEXO ERP") @map("business_name") @db.VarChar(180)
+  taxId                  String?  @map("tax_id") @db.VarChar(30)
+  address                String?  @db.Text
+  phone                  String?  @db.VarChar(40)
+  baseCurrency           String   @default("MXN") @map("base_currency") @db.Char(3)
+  allowedCurrencies      String[] @default(["MXN", "USD"]) @map("allowed_currencies")
+  defaultTaxRate         Decimal  @default(16) @map("default_tax_rate") @db.Decimal(5, 2)
+  maxCashierDiscountRate Decimal  @default(10) @map("max_cashier_discount_rate") @db.Decimal(5, 2)
+  ticketFooter           String?  @map("ticket_footer") @db.VarChar(300)
+  accentColor            String   @default("#2563eb") @map("accent_color") @db.VarChar(7)
+  accentColorDark        String   @default("#3b82f6") @map("accent_color_dark") @db.VarChar(7)
+  sidebarStyle           String   @default("dark") @map("sidebar_style") @db.VarChar(10)
+  borderRadius           String   @default("md") @map("border_radius") @db.VarChar(5)
+  fontSize               String   @default("sm") @map("font_size") @db.VarChar(5)
+  fontFamily             String   @default("poppins") @map("font_family") @db.VarChar(20)
+  density                String   @default("normal") @map("density") @db.VarChar(15)
+  logoUrl                String?  @map("logo_url") @db.VarChar(500)
+  faviconUrl             String?  @map("favicon_url") @db.VarChar(500)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("business_settings")
+}
+
+model DocumentSequence {
+  key       String   @id @db.VarChar(40)
+  prefix    String   @db.VarChar(12)
+  nextValue BigInt   @default(1) @map("next_value")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("document_sequences")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  userId     String?  @map("user_id") @db.Uuid
+  action     String   @db.VarChar(80)
+  entityType String?  @map("entity_type") @db.VarChar(80)
+  entityId   String?  @map("entity_id") @db.VarChar(100)
+  ipHash     String?  @map("ip_hash") @db.Char(64)
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+model PaymentAttempt {
+  id                  String   @id @default(uuid()) @db.Uuid
+  clientRequestId     String   @unique @map("client_request_id") @db.Uuid
+  saleId              String   @map("sale_id") @db.Uuid
+  provider            String   @default("STRIPE") @db.VarChar(20)
+  environment         String   @default("TEST") @db.VarChar(10)
+  status              PaymentAttemptStatus @default(PENDING)
+  expectedAmount      Decimal  @map("expected_amount") @db.Decimal(14, 2)
+  currency            String   @db.Char(3)
+  checkoutSessionId   String?  @unique @map("checkout_session_id") @db.VarChar(200)
+  paymentIntentId     String?  @unique @map("payment_intent_id") @db.VarChar(200)
+  chargeId            String?  @unique @map("charge_id") @db.VarChar(200)
+  cashierId           String   @map("cashier_id") @db.Uuid
+  cashRegisterId      String   @map("cash_register_id") @db.Uuid
+  cashSessionId       String   @map("cash_session_id") @db.Uuid
+  cardBrand           String?  @map("card_brand") @db.VarChar(30)
+  cardLast4           String?  @map("card_last4") @db.Char(4)
+  reasonCode          String?  @map("reason_code") @db.VarChar(50)
+  errorCode           String?  @map("error_code") @db.VarChar(50)
+  errorMessage        String?  @map("error_message") @db.VarChar(500)
+  livemode            Boolean  @default(false)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  confirmedAt         DateTime? @map("confirmed_at") @db.Timestamptz(3)
+
+  sale              Sale               @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  cashier           User               @relation("PaymentCashier", fields: [cashierId], references: [id], onDelete: Restrict)
+  cashRegister      CashRegister       @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+  cashSession       CashSession        @relation(fields: [cashSessionId], references: [id], onDelete: Restrict)
+  refunds           PaymentRefund[]
+  stockReservations StockReservation[]
+
+  @@index([saleId])
+  @@index([checkoutSessionId])
+  @@map("payment_attempts")
+}
+
+model StockReservation {
+  id               String   @id @default(uuid()) @db.Uuid
+  paymentAttemptId String   @map("payment_attempt_id") @db.Uuid
+  productId        String   @map("product_id") @db.Uuid
+  quantity         Decimal  @db.Decimal(14, 3)
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz(3)
+  consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(3)
+  releasedAt       DateTime? @map("released_at") @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  paymentAttempt PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentAttemptId, productId])
+  @@index([productId, expiresAt])
+  @@map("stock_reservations")
+}
+
+model PaymentWebhookEvent {
+  id               String   @id @default(uuid()) @db.Uuid
+  stripeEventId    String   @unique @map("stripe_event_id") @db.VarChar(200)
+  eventType        String   @map("event_type") @db.VarChar(100)
+  stripeObjectId   String?  @map("stripe_object_id") @db.VarChar(200)
+  processingStatus WebhookProcessingStatus @default(RECEIVED) @map("processing_status")
+  error            String?  @db.VarChar(500)
+  lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(3)
+  receivedAt       DateTime @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt      DateTime? @map("processed_at") @db.Timestamptz(3)
+
+  @@index([processingStatus, lockedUntil])
+  @@map("payment_webhook_events")
+}
+
+model PaymentRefund {
+  id                String   @id @default(uuid()) @db.Uuid
+  paymentAttemptId  String   @map("payment_attempt_id") @db.Uuid
+  saleId            String   @map("sale_id") @db.Uuid
+  stripeRefundId    String?  @unique @map("stripe_refund_id") @db.VarChar(200)
+  amount            Decimal  @db.Decimal(14, 2)
+  currency          String   @db.Char(3)
+  status            RefundStatus @default(PENDING)
+  reason            String   @db.VarChar(300)
+  requestedById     String   @map("requested_by_id") @db.Uuid
+  error             String?  @db.VarChar(500)
+  idempotencyKey    String   @unique @map("idempotency_key") @db.VarChar(100)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  processedAt       DateTime? @map("processed_at") @db.Timestamptz(3)
+
+  paymentAttempt PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  sale           Sale           @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  requestedBy    User           @relation("PaymentRefundRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@index([paymentAttemptId])
+  @@map("payment_refunds")
+}
