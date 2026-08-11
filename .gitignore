@@ -12,3 +12,4 @@ prisma/*.db
 prisma/*.db-journal
 strix_runs/
 strix.log
+upload/
