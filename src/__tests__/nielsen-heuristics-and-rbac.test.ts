@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Role } from "@prisma/client";
+import { Role, Prisma } from "@prisma/client";
 import { can, assertPermission, permissionsFor } from "@/lib/permissions";
 import { calculateLine, calculateTotals } from "@/lib/money";
 import { strongPassword } from "@/lib/validators";
@@ -98,7 +98,7 @@ describe("Batería de Pruebas: Seguridad, Roles y Heurísticas de Nielsen", () =
     it("H2: Coincidencia entre el sistema y el mundo real (Cálculo preciso de precios, impuestos y descuentos)", () => {
       const line = calculateLine({
         productId: "prod_1",
-        quantity: 5,
+        quantity: new Prisma.Decimal(5),
         unitPrice: 100,
         discountAmount: 50,
         taxRate: 16
@@ -128,7 +128,7 @@ describe("Batería de Pruebas: Seguridad, Roles y Heurísticas de Nielsen", () =
     it("H9: Recuperación de errores (Mensajes claros de error en llamadas de dominio)", () => {
       expect(() => calculateLine({
         productId: "p1",
-        quantity: 1,
+        quantity: new Prisma.Decimal(1),
         unitPrice: 50,
         discountAmount: 100, // Descuento superior al importe
         taxRate: 16

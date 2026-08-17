@@ -88,7 +88,7 @@ export async function createSale(
         return {
           ...calculateLine({
             productId: product.id,
-            quantity: item.quantity,
+            quantity: new Prisma.Decimal(item.quantity),
             unitPrice,
             discountAmount: item.discountAmount,
             taxRate: product.taxRate
@@ -103,7 +103,7 @@ export async function createSale(
         : new Prisma.Decimal(0);
       if (
         actor.role === Role.CASHIER &&
-        (discountRate > settings.maxCashierDiscountRate)
+        (discountRate.gt(settings.maxCashierDiscountRate))
       ) {
         throw new ApiError(
           403,
@@ -377,18 +377,18 @@ async function deductStock(
     product: {
       id: string;
       name: string;
-      currentStock: number;
-      storeStock: number;
-      warehouseStock: number;
-      minStock: number;
+      currentStock: Prisma.Decimal;
+      storeStock: Prisma.Decimal;
+      warehouseStock: Prisma.Decimal;
+      minStock: Prisma.Decimal;
       allowNegative: boolean;
       cost: Prisma.Decimal;
       supplierPrices: Array<{
         supplier: { email: string | null; legalName: string; tradeName: string | null };
-        allocatedQty: number | null;
+        allocatedQty: Prisma.Decimal | null;
       }>;
     };
-    quantity: number;
+    quantity: Prisma.Decimal;
   }>
 ) {
   const sortedLines = [...lines].sort((a, b) => a.product.id.localeCompare(b.product.id));
@@ -416,12 +416,12 @@ async function deductStock(
       _sum: { quantity: true }
     });
 
-    const activeReservations = reserved._sum.quantity || Number(0);
-    const availableStock = (product.storeStock - activeReservations);
-    const stockAfter = (product.currentStock - line.quantity);
-    const storeStockAfter = (product.storeStock - line.quantity);
+    const activeReservations = reserved._sum.quantity || new Prisma.Decimal(0);
+    const availableStock = product.storeStock.minus(activeReservations);
+    const stockAfter = product.currentStock.minus(line.quantity);
+    const storeStockAfter = product.storeStock.minus(line.quantity);
 
-    if ((availableStock < line.quantity) && !product.allowNegative) {
+    if (availableStock.lt(line.quantity) && !product.allowNegative) {
       throw new ApiError(
         409,
         `Existencias insuficientes en tienda para ${product.name}. Disponibles: ${availableStock.toString()}`
@@ -463,13 +463,13 @@ async function deductStock(
     });
 
     // Email alert logic
-    if ((stockAfter <= product.minStock) && (product.currentStock > product.minStock)) {
+    if (stockAfter.lte(product.minStock) && product.currentStock.gt(product.minStock)) {
       const preferredSupplier = product.supplierPrices.find(sp => sp.isPreferred) || product.supplierPrices[0];
       if (preferredSupplier?.supplier?.email) {
         // Fire and forget
         db.businessSettings.findUnique({ where: { id: 1 } }).then(settings => {
            if (!settings) return;
-           const additionalNeeded = Number(product.maxStock ? (product.maxStock - stockAfter) : (product.minStock + 10));
+           const additionalNeeded = Number(product.maxStock ? product.maxStock.minus(stockAfter) : product.minStock.plus(10));
            const supplier = preferredSupplier.supplier;
            const emailInput = {
               to: supplier.email!,

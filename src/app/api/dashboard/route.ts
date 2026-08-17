@@ -84,11 +84,11 @@ export async function GET() {
       ]);
 
     const lowStock = products.filter((product) =>
-      (product.currentStock <= product.minStock)
+      (product.currentStock.lte(product.minStock))
     );
     const highStock = products.filter(
       (product) =>
-        product.maxStock && (product.currentStock >= product.maxStock)
+        product.maxStock && (product.currentStock.gte(product.maxStock))
     );
     const dailyMap = new Map<string, Prisma.Decimal>();
     for (let index = 0; index < 7; index++) {
@@ -100,7 +100,7 @@ export async function GET() {
     let todayTransactions = 0;
     const topProducts = new Map<
       string,
-      { productId: string; name: string; quantity: number; total: Prisma.Decimal }
+      { productId: string; name: string; quantity: Prisma.Decimal; total: Prisma.Decimal }
     >();
 
     for (const sale of weekSales) {
@@ -125,27 +125,27 @@ export async function GET() {
 
       const refundedByLine = new Map<
         string,
-        { quantity: number; amount: Prisma.Decimal }
+        { quantity: Prisma.Decimal; amount: Prisma.Decimal }
       >();
       for (const refund of sale.refunds) {
         for (const item of refund.items) {
           const current = refundedByLine.get(item.saleItemId) || {
-            quantity: 0,
+            quantity: new Prisma.Decimal(0),
             amount: new Prisma.Decimal(0)
           };
-          current.quantity = (current.quantity + item.quantity);
+          current.quantity = current.quantity.plus(new Prisma.Decimal(item.quantity));
           current.amount = current.amount.plus(item.amount);
           refundedByLine.set(item.saleItemId, current);
         }
       }
       for (const item of sale.items) {
         const refunded = refundedByLine.get(item.id) || {
-          quantity: 0,
+          quantity: new Prisma.Decimal(0),
           amount: new Prisma.Decimal(0)
         };
-        const quantity = Math.max(
-          item.quantity - refunded.quantity,
-          0
+        const quantity = Prisma.Decimal.max(
+          item.quantity.minus(refunded.quantity),
+          new Prisma.Decimal(0)
         );
         const total = roundMoney(
           Prisma.Decimal.max(item.lineTotal.minus(refunded.amount), new Prisma.Decimal(0)).mul(
@@ -155,11 +155,11 @@ export async function GET() {
         const aggregate = topProducts.get(item.productId) || {
           productId: item.productId,
           name: item.nameSnapshot,
-          quantity: 0,
+          quantity: new Prisma.Decimal(0),
           total: new Prisma.Decimal(0)
         };
         aggregate.name = item.nameSnapshot;
-        aggregate.quantity = aggregate.quantity + quantity;
+        aggregate.quantity = aggregate.quantity.plus(quantity);
         aggregate.total = roundMoney(aggregate.total.plus(total));
         topProducts.set(item.productId, aggregate);
       }
@@ -184,8 +184,8 @@ export async function GET() {
       stockAlerts: lowStock.slice(0, 8),
       salesTrend: [...dailyMap].map(([date, total]) => ({ date, total })),
       topProducts: [...topProducts.values()]
-        .filter((item) => (item.quantity > 0))
-        .sort((left, right) => right.quantity - left.quantity)
+        .filter((item) => (item.quantity.gt(0)))
+        .sort((left, right) => right.quantity.minus(left.quantity).toNumber())
         .slice(0, 5)
     });
   } catch (error) {

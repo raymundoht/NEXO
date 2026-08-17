@@ -33,17 +33,17 @@ export async function POST(request: Request) {
         let warehouseStockAfter = product.warehouseStock;
 
         if (input.direction === "TO_STORE") {
-           if ((product.warehouseStock < quantity) && !product.allowNegative) {
+           if (product.warehouseStock.lt(quantity) && !product.allowNegative) {
               throw new ApiError(409, "Inventario insuficiente en almacén para transferir.");
            }
-           warehouseStockAfter = (product.warehouseStock - quantity);
-           storeStockAfter = (product.storeStock + quantity);
+           warehouseStockAfter = product.warehouseStock.minus(quantity);
+           storeStockAfter = product.storeStock.plus(quantity);
         } else {
-           if ((product.storeStock < quantity) && !product.allowNegative) {
+           if (product.storeStock.lt(quantity) && !product.allowNegative) {
               throw new ApiError(409, "Inventario insuficiente en tienda para transferir.");
            }
-           storeStockAfter = (product.storeStock - quantity);
-           warehouseStockAfter = (product.warehouseStock + quantity);
+           storeStockAfter = product.storeStock.minus(quantity);
+           warehouseStockAfter = product.warehouseStock.plus(quantity);
         }
 
         const updated = await tx.product.updateMany({

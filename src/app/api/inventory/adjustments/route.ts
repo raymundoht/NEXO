@@ -33,12 +33,12 @@ export async function POST(request: Request) {
           where: { id: input.productId }
         });
         if (!product) throw new ApiError(404, "Producto no encontrado.");
-        const quantity = Number(input.quantity);
-        const stockAfter = (product.currentStock + quantity);
-        if ((stockAfter < 0) && !product.allowNegative) {
+        const quantity = new Prisma.Decimal(input.quantity);
+        const stockAfter = product.currentStock.plus(quantity);
+        if (stockAfter.lt(0) && !product.allowNegative) {
           throw new ApiError(409, "El ajuste dejaría existencias negativas.");
         }
-        if (quantity < 0 && !product.allowNegative) {
+        if (quantity.lt(0) && !product.allowNegative) {
           const reservations = await tx.stockReservation.aggregate({
             where: {
               productId: product.id,
@@ -48,8 +48,8 @@ export async function POST(request: Request) {
             },
             _sum: { quantity: true }
           });
-          const reserved = Number(reservations._sum.quantity || 0);
-          if ((stockAfter < reserved)) {
+          const reserved = new Prisma.Decimal(reservations._sum.quantity || 0);
+          if (stockAfter.lt(reserved)) {
             throw new ApiError(
               409,
               "El ajuste consumiría existencias reservadas para un pago en proceso."

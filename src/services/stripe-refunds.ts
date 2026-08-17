@@ -69,7 +69,7 @@ export async function finalizeStripeRefund(
         const quantity = Number(requested.quantity);
         const amount = Number(requested.amount);
         const prior = previousMap.get(line.id) || 0;
-        if (quantity <= 0 || amount <= 0 || (prior + quantity) > line.quantity) {
+        if (quantity <= 0 || amount <= 0 || (new Prisma.Decimal(prior).plus(quantity)).gt(line.quantity)) {
           throw new ApiError(409, `La devolución de ${line.nameSnapshot} ya no es válida.`);
         }
         return { line, quantity, amount };
@@ -123,7 +123,7 @@ export async function finalizeStripeRefund(
       for (const { line, quantity } of lines) {
         const product = productMap.get(line.productId);
         if (!product) throw new ApiError(404, "Producto del reembolso no encontrado.");
-        const stockAfter = (product.currentStock + quantity);
+        const stockAfter = product.currentStock.plus(quantity);
         const updated = await tx.product.updateMany({
           where: { id: product.id, currentStock: product.currentStock },
           data: { currentStock: stockAfter }
@@ -153,7 +153,7 @@ export async function finalizeStripeRefund(
         const prior = previousMap.get(item.id) || 0;
         const current =
           lines.find(({ line }) => line.id === item.id)?.quantity || 0;
-        return (prior + current) >= item.quantity;
+        return (new Prisma.Decimal(prior).plus(current)).gte(item.quantity);
       });
       await tx.sale.update({
         where: { id: paymentRefund.saleId },

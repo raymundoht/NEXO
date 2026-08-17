@@ -110,11 +110,9 @@ export async function POST(
             ? sale.items
                 .map((line) => ({
                   saleItemId: line.id,
-                  quantity: (line.quantity - 
-                    (previousMap.get(line.id)?.quantity || 0)
-                  )
+                  quantity: line.quantity.minus(previousMap.get(line.id)?.quantity || 0)
                 }))
-                .filter((line) => (line.quantity > 0))
+                .filter((line) => line.quantity.gt(0))
             : input.items.map((item) => ({
                 saleItemId: item.saleItemId,
                 quantity: Number(item.quantity)
@@ -142,13 +140,13 @@ export async function POST(
             amount: new Prisma.Decimal(0)
           };
           const alreadyRefunded = previousRefund.quantity;
-          if ((alreadyRefunded + quantity) > line.quantity) {
+          if ((new Prisma.Decimal(alreadyRefunded).plus(quantity)).gt(line.quantity)) {
             throw new ApiError(
               409,
               `El reembolso de ${line.nameSnapshot} supera lo vendido.`
             );
           }
-          const amount = (alreadyRefunded + quantity) >= line.quantity
+          const amount = (new Prisma.Decimal(alreadyRefunded).plus(quantity)).gte(line.quantity)
             ? roundMoney(line.lineTotal.minus(previousRefund.amount))
             : roundMoney(line.lineTotal.div(line.quantity).mul(quantity));
           if (amount.lte(0)) {
@@ -211,9 +209,9 @@ export async function POST(
 
         for (const { line, quantity } of refundLines) {
           const stockBefore = line.product.currentStock;
-          const stockAfter = (stockBefore + quantity);
+          const stockAfter = (stockBefore.plus(quantity));
           const storeStockBefore = line.product.storeStock;
-          const storeStockAfter = (storeStockBefore + quantity);
+          const storeStockAfter = (storeStockBefore.plus(quantity));
           const updated = await tx.product.updateMany({
             where: {
               id: line.productId,
@@ -277,12 +275,11 @@ export async function POST(
         }
 
         const allRefunded = sale.items.every((line) => {
-          const prior =
-            previousMap.get(line.id)?.quantity || Number(0);
-          const current =
-            refundLines.find((item) => item.line.id === line.id)?.quantity ||
-            Number(0);
-          return (prior + current) >= line.quantity;
+          const priorQuantity = previousMap.get(line.id)?.quantity || 0;
+          const prior = new Prisma.Decimal(priorQuantity);
+          const currentQuantity = refundLines.find((item) => item.line.id === line.id)?.quantity || 0;
+          const current = new Prisma.Decimal(currentQuantity);
+          return prior.plus(current).gte(line.quantity);
         });
         await tx.sale.update({
           where: { id: sale.id },

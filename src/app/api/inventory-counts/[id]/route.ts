@@ -73,12 +73,12 @@ export async function PATCH(
         }
         for (const item of input.items) {
           const original = itemMap.get(item.id)!;
-          const counted = Number(item.countedQuantity);
+          const counted = new Prisma.Decimal(item.countedQuantity);
           await tx.inventoryCountItem.update({
             where: { id: item.id },
             data: {
               countedQuantity: counted,
-              difference: (counted - original.systemQuantity),
+              difference: counted.minus(original.systemQuantity),
               notes: item.notes ? sanitizeText(item.notes, 300) : null
             }
           });

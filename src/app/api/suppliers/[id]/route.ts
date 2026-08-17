@@ -60,10 +60,10 @@ export async function GET(
             },
             _sum: { quantity: true }
           });
-          const receivedQty = received._sum.quantity || 0;
+          const receivedQty = received._sum.quantity || new Prisma.Decimal(0);
           totalReceived = receivedQty.toString();
-          const available = sp.allocatedQty - receivedQty;
-          availableQty = available < 0 ? "0" : available.toString();
+          const available = sp.allocatedQty.minus(receivedQty);
+          availableQty = available.isNegative() ? "0" : available.toString();
         }
 
         return {

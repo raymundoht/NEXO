@@ -223,11 +223,11 @@ model Product {
   cost          Decimal       @default(0) @db.Decimal(14, 4)
   salePrice     Decimal       @map("sale_price") @db.Decimal(14, 4)
   taxRate       Decimal       @default(16) @map("tax_rate") @db.Decimal(5, 2)
-  currentStock   Int           @default(0) @map("current_stock")
-  storeStock     Int           @default(0) @map("store_stock")
-  warehouseStock Int           @default(0) @map("warehouse_stock")
-  minStock       Int           @default(0) @map("min_stock")
-  maxStock       Int?         @map("max_stock")
+  currentStock    Decimal  @default(0) @db.Decimal(14,3) @map("current_stock")
+  storeStock      Decimal  @default(0) @db.Decimal(14,3) @map("store_stock")
+  warehouseStock  Decimal  @default(0) @db.Decimal(14,3) @map("warehouse_stock")
+  minStock        Decimal  @default(0) @db.Decimal(14,3) @map("min_stock")
+  maxStock        Decimal? @db.Decimal(14,3)         @map("max_stock")
   allowNegative Boolean       @default(false) @map("allow_negative")
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -281,7 +281,7 @@ model SupplierProduct {
   currency      String   @default("MXN") @db.Char(3)
   leadDays      Int      @default(0) @map("lead_days")
   isPreferred   Boolean  @default(false) @map("is_preferred")
-  allocatedQty  Int? @map("allocated_qty")
+  allocatedQty    Decimal? @db.Decimal(14,3) @map("allocated_qty")
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
@@ -330,8 +330,8 @@ model PurchaseOrderItem {
   skuSnapshot      String  @map("sku_snapshot") @db.VarChar(80)
   nameSnapshot     String  @map("name_snapshot") @db.VarChar(200)
   unitSnapshot     String  @map("unit_snapshot") @db.VarChar(20)
-  quantityOrdered  Int @map("quantity_ordered")
-  quantityReceived Int @default(0) @map("quantity_received")
+  quantityOrdered  Decimal @db.Decimal(14,3) @map("quantity_ordered")
+  quantityReceived Decimal @db.Decimal(14,3) @default(0) @map("quantity_received")
   unitCost         Decimal @map("unit_cost") @db.Decimal(14, 4)
   taxRate          Decimal @map("tax_rate") @db.Decimal(5, 2)
   lineSubtotal     Decimal @map("line_subtotal") @db.Decimal(14, 2)
@@ -370,7 +370,7 @@ model PurchaseReceiptItem {
   receiptId           String  @map("receipt_id") @db.Uuid
   purchaseOrderItemId String  @map("purchase_order_item_id") @db.Uuid
   productId           String  @map("product_id") @db.Uuid
-  quantity            Int
+  quantity          Decimal  @db.Decimal(14,3)
   unitCost            Decimal @map("unit_cost") @db.Decimal(14, 4)
 
   receipt           PurchaseReceipt   @relation(fields: [receiptId], references: [id], onDelete: Cascade)
@@ -387,9 +387,9 @@ model StockMovement {
   productId      String            @map("product_id") @db.Uuid
   userId         String            @map("user_id") @db.Uuid
   type           StockMovementType
-  quantity       Int
-  stockBefore    Int      @map("stock_before")
-  stockAfter     Int      @map("stock_after")
+  quantity          Decimal  @db.Decimal(14,3)
+  stockBefore     Decimal @db.Decimal(14,3)      @map("stock_before")
+  stockAfter      Decimal @db.Decimal(14,3)      @map("stock_after")
   unitCost       Decimal?          @map("unit_cost") @db.Decimal(14, 4)
   referenceType  String?           @map("reference_type") @db.VarChar(50)
   referenceId    String?           @map("reference_id") @db.VarChar(80)
@@ -428,8 +428,8 @@ model InventoryCountItem {
   id               String   @id @default(uuid()) @db.Uuid
   inventoryCountId String   @map("inventory_count_id") @db.Uuid
   productId        String   @map("product_id") @db.Uuid
-  systemQuantity   Int  @map("system_quantity")
-  countedQuantity  Int? @map("counted_quantity")
+  systemQuantity  Decimal @db.Decimal(14,3)  @map("system_quantity")
+  countedQuantity Decimal? @db.Decimal(14,3) @map("counted_quantity")
   difference       Decimal? @db.Decimal(14, 3)
   notes            String?  @db.VarChar(300)
 
@@ -547,7 +547,7 @@ model SaleItem {
   productId        String  @map("product_id") @db.Uuid
   skuSnapshot      String  @map("sku_snapshot") @db.VarChar(80)
   nameSnapshot     String  @map("name_snapshot") @db.VarChar(200)
-  quantity         Int
+  quantity          Decimal  @db.Decimal(14,3)
   unitPrice        Decimal @map("unit_price") @db.Decimal(14, 4)
   unitCostSnapshot Decimal @map("unit_cost_snapshot") @db.Decimal(14, 4)
   discountAmount   Decimal @default(0) @map("discount_amount") @db.Decimal(14, 2)
@@ -590,7 +590,7 @@ model RefundItem {
   refundId   String  @map("refund_id") @db.Uuid
   saleItemId String  @map("sale_item_id") @db.Uuid
   productId  String  @map("product_id") @db.Uuid
-  quantity   Int
+  quantity          Decimal  @db.Decimal(14,3)
   amount     Decimal @db.Decimal(14, 2)
 
   refund   Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
@@ -695,7 +695,7 @@ model StockReservation {
   id               String    @id @default(uuid()) @db.Uuid
   paymentAttemptId String    @map("payment_attempt_id") @db.Uuid
   productId        String    @map("product_id") @db.Uuid
-  quantity         Int
+  quantity          Decimal  @db.Decimal(14,3)
   expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
   consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(3)
   releasedAt       DateTime? @map("released_at") @db.Timestamptz(3)

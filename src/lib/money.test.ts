@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { Prisma } from "@prisma/client";
 import { calculateLine, calculateTotals } from "@/lib/money";
 
 describe("cálculos de venta", () => {
   it("calcula descuento, impuesto y total con redondeo monetario", () => {
     const line = calculateLine({
       productId: "p1",
-      quantity: 2,
+      quantity: new Prisma.Decimal(2),
       unitPrice: 100,
       discountAmount: 20,
       taxRate: 16
@@ -19,13 +20,13 @@ describe("cálculos de venta", () => {
     const totals = calculateTotals([
       calculateLine({
         productId: "p1",
-        quantity: 1,
+        quantity: new Prisma.Decimal(1),
         unitPrice: 100,
         taxRate: 16
       }),
       calculateLine({
         productId: "p2",
-        quantity: 3,
+        quantity: new Prisma.Decimal(3),
         unitPrice: 10,
         taxRate: 0
       })
@@ -39,7 +40,7 @@ describe("cálculos de venta", () => {
     expect(() =>
       calculateLine({
         productId: "p1",
-        quantity: 1,
+        quantity: new Prisma.Decimal(1),
         unitPrice: 50,
         discountAmount: 60,
         taxRate: 16

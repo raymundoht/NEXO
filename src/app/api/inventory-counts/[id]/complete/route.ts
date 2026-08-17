@@ -47,17 +47,16 @@ export async function POST(
         }
         for (const item of input.items) {
           const original = itemMap.get(item.id)!;
-          const counted = Number(item.countedQuantity);
+          const counted = new Prisma.Decimal(item.countedQuantity);
           await tx.inventoryCountItem.update({
             where: { id: item.id },
             data: {
               countedQuantity: counted,
-              difference: (counted - original.systemQuantity),
+              difference: counted.minus(original.systemQuantity),
               notes: item.notes?.trim() || null
             }
           });
         }
-
         const count = await tx.inventoryCount.findUniqueOrThrow({
           where: { id },
           include: { items: { include: { product: true } } }
@@ -94,8 +93,8 @@ export async function POST(
         let adjustments = 0;
         for (const item of count.items) {
           const counted = item.countedQuantity!;
-          const difference = (counted - item.systemQuantity);
-          if (difference === 0) continue;
+          const difference = counted.minus(item.systemQuantity);
+          if (difference.equals(0)) continue;
           adjustments++;
           const updatedProduct = await tx.product.updateMany({
             where: { id: item.productId, currentStock: item.systemQuantity },

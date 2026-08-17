@@ -82,9 +82,9 @@ export async function POST(
           if (!line) {
             throw new ApiError(400, "Una partida no pertenece a esta orden.");
           }
-          const quantity = Number(item.quantity);
-          const remaining = (line.quantityOrdered - line.quantityReceived);
-          if ((quantity > remaining)) {
+          const quantity = new Prisma.Decimal(item.quantity);
+          const remaining = line.quantityOrdered.minus(line.quantityReceived);
+          if (quantity.gt(remaining)) {
             throw new ApiError(
               409,
               `La recepción de ${line.product.name} supera lo pendiente.`
@@ -120,7 +120,7 @@ export async function POST(
               _sum: { quantity: true }
             });
             const totalReceived = new Prisma.Decimal(received._sum.quantity ?? 0);
-            const newQuantity = Number(item.quantity);
+            const newQuantity = new Prisma.Decimal(item.quantity);
             const wouldBeTotal = totalReceived.plus(newQuantity);
             if (wouldBeTotal.gt(supplierProduct.allocatedQty ?? 0)) {
               const available = new Prisma.Decimal(supplierProduct.allocatedQty ?? 0).minus(totalReceived);
@@ -159,7 +159,7 @@ export async function POST(
                 return {
                   purchaseOrderItemId: line.id,
                   productId: line.productId,
-                  quantity: Number(item.quantity),
+                  quantity: new Prisma.Decimal(item.quantity),
                   unitCost: line.unitCost
                 };
               })
@@ -174,14 +174,14 @@ export async function POST(
           if (!product) {
             throw new ApiError(404, "Producto de la orden no encontrado.");
           }
-          const quantity = Number(item.quantity);
+          const quantity = new Prisma.Decimal(item.quantity);
           const stockBefore = product.currentStock;
-          const stockAfter = (stockBefore + quantity);
+          const stockAfter = stockBefore.plus(quantity);
           const baseUnitCost =
             order.currency === settings.baseCurrency
               ? line.unitCost
               : roundCost(line.unitCost.mul(order.exchangeRate));
-          const valuedCurrentStock = stockBefore > 0 ? new Prisma.Decimal(stockBefore) : new Prisma.Decimal(0);
+          const valuedCurrentStock = stockBefore.gt(0) ? stockBefore : new Prisma.Decimal(0);
           const denominator = valuedCurrentStock.plus(quantity);
           const averageCost = denominator.gt(0)
             ? roundCost(
@@ -203,7 +203,7 @@ export async function POST(
             );
           }
           const warehouseBefore = product.warehouseStock;
-          const warehouseAfter = (warehouseBefore + quantity);
+          const warehouseAfter = warehouseBefore.plus(quantity);
           const productUpdated = await tx.product.updateMany({
             where: { id: line.productId, currentStock: stockBefore },
             data: { 
@@ -257,7 +257,7 @@ export async function POST(
           where: { purchaseOrderId: order.id }
         });
         const complete = refreshedLines.every((line) =>
-          (line.quantityReceived >= line.quantityOrdered)
+          (line.quantityReceived.gte(line.quantityOrdered))
         );
         const orderUpdated = await tx.purchaseOrder.updateMany({
           where: {

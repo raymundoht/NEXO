@@ -3,7 +3,7 @@ import { ApiError } from "@/lib/api";
 
 export type CalculatedLine = {
   productId: string;
-  quantity: number;
+  quantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal;
   discountAmount: Prisma.Decimal;
   taxRate: Prisma.Decimal;
@@ -26,7 +26,7 @@ export function roundCost(value: Prisma.Decimal) {
 
 export function calculateLine(input: {
   productId: string;
-  quantity: number;
+  quantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal.Value;
   discountAmount?: Prisma.Decimal.Value;
   taxRate: Prisma.Decimal.Value;
@@ -36,7 +36,7 @@ export function calculateLine(input: {
   const discountAmount = decimal(input.discountAmount || 0);
   const taxRate = decimal(input.taxRate);
 
-  if (quantity <= 0 || unitPrice.lt(0) || discountAmount.lt(0)) {
+  if (quantity.lte(0) || unitPrice.lt(0) || discountAmount.lt(0)) {
     throw new ApiError(400, "Cantidad, precio o descuento inválido.");
   }
 

@@ -104,11 +104,9 @@ export async function POST(request: Request) {
             ? sale.items
                 .map((item) => ({
                   saleItemId: item.id,
-                  quantity: (item.quantity - 
-                    (previousMap.get(item.id)?.quantity || 0)
-                  )
+                  quantity: item.quantity.minus(previousMap.get(item.id)?.quantity || 0)
                 }))
-                .filter((item) => (item.quantity > 0))
+                .filter((item) => item.quantity.gt(0))
             : input.items.map((item) => ({
                 saleItemId: item.saleItemId,
                 quantity: Number(item.quantity)
@@ -127,10 +125,10 @@ export async function POST(request: Request) {
             quantity: 0,
             amount: new Prisma.Decimal(0)
           };
-          if ((prior.quantity + requestedItem.quantity) > item.quantity) {
+          if ((new Prisma.Decimal(prior.quantity).plus(requestedItem.quantity)).gt(item.quantity)) {
             throw new ApiError(409, `El reembolso de ${item.nameSnapshot} supera lo vendido.`);
           }
-          const amount = (prior.quantity + requestedItem.quantity) >= item.quantity
+          const amount = (new Prisma.Decimal(prior.quantity).plus(requestedItem.quantity)).gte(item.quantity)
             ? roundMoney(item.lineTotal.minus(prior.amount))
             : roundMoney(item.lineTotal.div(item.quantity).mul(requestedItem.quantity));
           if (amount.lte(0)) {
