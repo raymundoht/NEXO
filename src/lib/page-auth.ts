@@ -9,3 +9,10 @@ export async function requirePagePermission(permission: Permission) {
   if (!can(user.role, permission)) notFound();
   return user;
 }
+
+export async function requireAnyPagePermission(permissions: Permission[]) {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  if (!permissions.some((p) => can(user.role, p))) notFound();
+  return user;
+}

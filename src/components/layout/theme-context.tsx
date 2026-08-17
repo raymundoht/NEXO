@@ -247,9 +247,13 @@ export function AppearanceProvider({
         }
       } catch {
         // Revert on error - reload from server
-        const data = await apiFetch<Appearance>("/api/settings/appearance");
-        setAppearance(data);
-        saveToStorage(data);
+        try {
+          const data = await apiFetch<Appearance>("/api/settings/appearance");
+          setAppearance(data);
+          saveToStorage(data);
+        } catch {
+          // Network error — keep current state, user can retry
+        }
       }
     },
     [appearance]

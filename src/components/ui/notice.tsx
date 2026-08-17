@@ -17,6 +17,8 @@ export function Notice({
           ? "bg-[var(--danger-tint)] text-[var(--danger)]"
           : "bg-[var(--success-tint)] text-[var(--success)]"
       }`}
+      aria-live={type === "error" ? "assertive" : "polite"}
+      role={type === "error" ? "alert" : "status"}
     >
       {type === "error" ? (
         <AlertCircle className="mt-0.5 shrink-0" size={16} />

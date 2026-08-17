@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Banknote,
@@ -8,11 +8,13 @@ import {
   CirclePause,
   CreditCard,
   Minus,
+  PackagePlus,
   Plus,
   Search,
   ShoppingCart,
   Trash2,
-  Percent
+  Percent,
+  Printer
 } from "lucide-react";
 import { apiFetch, formatMoney } from "@/lib/client-api";
 import { PageHeader } from "@/components/ui/page-header";
@@ -49,7 +51,7 @@ type HeldSale = {
   folio: string;
   total: string;
   currency: string;
-  items: Array<{ nameSnapshot: string; quantity: string }>;
+  items: Array<{ nameSnapshot: string; quantity: string; unitPrice: string }>;
 };
 type PosConfig = {
   baseCurrency: string;
@@ -67,7 +69,6 @@ export function PosView() {
   const [search, setSearch] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "CARD">("CASH");
   const [amountTendered, setAmountTendered] = useState("");
-  const [cardAuthorization, setCardAuthorization] = useState("");
   const [currency, setCurrency] = useState("MXN");
   const [exchangeRate, setExchangeRate] = useState("1");
   const [config, setConfig] = useState<PosConfig>({
@@ -81,16 +82,31 @@ export function PosView() {
   const [processing, setProcessing] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [showReplenish, setShowReplenish] = useState(false);
+  const [replenishProduct, setReplenishProduct] = useState("");
+  const [replenishQty, setReplenishQty] = useState("");
+  const [replenishLoading, setReplenishLoading] = useState(false);
+  const saleRequestId = useRef<string | null>(null);
+  const checkoutRequestId = useRef<string | null>(null);
+  const heldCheckoutRequestId = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [productResult, registerResult, heldResult, configResult] = await Promise.all([
-        apiFetch<{ items: Product[] }>(`/api/products?pageSize=100&q=${encodeURIComponent(search)}`),
+      const productResult = await apiFetch<{ items: Product[] }>(`/api/products?pageSize=100&q=${encodeURIComponent(search)}`);
+      setProducts(productResult.items);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No fue posible cargar el POS.");
+    }
+  }, [search]);
+
+  const loadStatic = useCallback(async () => {
+    try {
+      const [registerResult, heldResult, configResult] = await Promise.all([
         apiFetch<Register[]>("/api/cash-registers"),
         apiFetch<{ items: Array<{ id: string; folio: string; total: string; currency: string }> }>("/api/sales?status=HELD&pageSize=50"),
         apiFetch<PosConfig>("/api/pos/config")
       ]);
-      setProducts(productResult.items);
       setRegisters(registerResult);
       setHeldSales(heldResult.items);
       setConfig(configResult);
@@ -99,16 +115,24 @@ export function PosView() {
           ? current
           : configResult.baseCurrency
       );
-      setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible cargar el POS.");
     }
-  }, [search]);
+  }, []);
+
+  useEffect(() => {
+    loadStatic();
+  }, [loadStatic]);
 
   useEffect(() => {
     const timer = setTimeout(load, 180);
     return () => clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    saleRequestId.current = null;
+    checkoutRequestId.current = null;
+  }, [cart]);
 
   const openRegister = useMemo(
     () =>
@@ -117,29 +141,78 @@ export function PosView() {
       ),
     [registers, user.id]
   );
+  const currentCashSession = openRegister?.sessions.find(
+    (session) => session.cashierId === user.id
+  );
+  const saleCurrencies =
+    currentCashSession && currentCashSession.currency !== config.baseCurrency
+      ? [currentCashSession.currency]
+      : config.allowedCurrencies;
+
+  useEffect(() => {
+    if (
+      currentCashSession &&
+      currentCashSession.currency !== config.baseCurrency
+    ) {
+      setCurrency(currentCashSession.currency);
+    }
+  }, [config.baseCurrency, currentCashSession]);
 
   const totals = useMemo(() => {
+    const rate = Number(exchangeRate);
+    const convertPrice = (value: string) =>
+      currency === config.baseCurrency
+        ? Number(value)
+        : Number(value) / (rate > 0 ? rate : 1);
+    const round = (value: number) =>
+      Math.round((value + Number.EPSILON) * 100) / 100;
     const discount = cart.reduce(
-      (total, line) => total + line.discountAmount,
+      (total, line) => round(total + line.discountAmount),
       0
     );
     const subtotal = cart.reduce(
-      (total, line) => total + Number(line.salePrice) * line.quantity - line.discountAmount,
+      (total, line) => {
+        const gross = round(convertPrice(line.salePrice) * line.quantity);
+        return round(total + round(gross - line.discountAmount));
+      },
       0
     );
     const tax = cart.reduce((total, line) => {
-      const base = Number(line.salePrice) * line.quantity - line.discountAmount;
-      return total + base * (Number(line.taxRate) / 100);
+      const gross = round(convertPrice(line.salePrice) * line.quantity);
+      const base = round(gross - line.discountAmount);
+      return round(total + round(base * (Number(line.taxRate) / 100)));
     }, 0);
-    return { discount, subtotal, tax, total: subtotal + tax };
-  }, [cart]);
+    return { discount, subtotal, tax, total: round(subtotal + tax) };
+  }, [cart, config.baseCurrency, currency, exchangeRate]);
 
   const cartSubtotal = useMemo(
-    () => cart.reduce((total, line) => total + Number(line.salePrice) * line.quantity, 0),
-    [cart]
+    () => {
+      const rate = Number(exchangeRate);
+      return cart.reduce((total, line) => {
+        const unitPrice =
+          currency === config.baseCurrency
+            ? Number(line.salePrice)
+            : Number(line.salePrice) / (rate > 0 ? rate : 1);
+        return total + unitPrice * line.quantity;
+      }, 0);
+    },
+    [cart, config.baseCurrency, currency, exchangeRate]
+  );
+
+  const displayUnitPrice = useCallback(
+    (price: string) => {
+      const rate = Number(exchangeRate);
+      return currency === config.baseCurrency
+        ? Number(price)
+        : Number(price) / (rate > 0 ? rate : 1);
+    },
+    [config.baseCurrency, currency, exchangeRate]
   );
 
   function addProduct(product: Product) {
+    if (Number(product.currentStock) <= 0) {
+      if (!confirm(`${product.name} no tiene existencias. ¿Agregar al carrito de todas formas?`)) return;
+    }
     setLastSale(null);
     setHeldSale(null);
     setCart((current) => {
@@ -205,10 +278,12 @@ export function PosView() {
     setProcessing(true);
     setError("");
     try {
+      saleRequestId.current ||= crypto.randomUUID();
       if (mode === "COMPLETE" && paymentMethod === "CARD") {
         const sale = await apiFetch<{ id: string; folio: string; total: string; currency: string; changeAmount?: string | null }>("/api/sales", {
           method: "POST",
           body: JSON.stringify({
+            clientRequestId: saleRequestId.current,
             mode: "HOLD",
             currency,
             exchangeRate,
@@ -219,23 +294,29 @@ export function PosView() {
             }))
           })
         });
-        const clientRequestId = crypto.randomUUID();
+        checkoutRequestId.current ||= crypto.randomUUID();
         const session = await apiFetch<{ url: string }>("/api/stripe/checkout", {
            method: "POST",
            body: JSON.stringify({
-              clientRequestId,
+               clientRequestId: checkoutRequestId.current,
               saleId: sale.id,
               cashRegisterId: openRegister.id,
               cashSessionId: openRegister.sessions.find(s => s.cashierId === user.id)?.id
            })
         });
-        window.location.href = session.url;
+        try {
+          window.location.href = session.url;
+        } catch {
+          setError("No se pudo redirigir a Stripe. Verifica que no esté bloqueando popups.");
+          setProcessing(false);
+        }
         return;
       }
 
       const sale = await apiFetch<{ id: string; folio: string; total: string; currency: string; changeAmount?: string | null }>("/api/sales", {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: saleRequestId.current,
           mode,
           currency,
           exchangeRate,
@@ -249,8 +330,7 @@ export function PosView() {
                 payment: {
                   cashRegisterId: openRegister.id,
                   paymentMethod,
-                  amountTendered: paymentMethod === "CASH" ? Number(amountTendered) : undefined,
-                  cardAuthorization: paymentMethod === "CARD" ? cardAuthorization : undefined
+                  amountTendered: paymentMethod === "CASH" ? Number(amountTendered) : undefined
                 }
               }
             : {})
@@ -258,10 +338,11 @@ export function PosView() {
       });
       setCart([]);
       setAmountTendered("");
-      setCardAuthorization("");
+      saleRequestId.current = null;
+      checkoutRequestId.current = null;
       setMessage(mode === "HOLD" ? `Venta ${sale.folio} guardada en espera.` : "");
       if (mode === "COMPLETE") setLastSale(sale);
-      await load();
+      await Promise.all([load(), loadStatic()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible procesar.");
     } finally {
@@ -272,6 +353,7 @@ export function PosView() {
   async function selectHeldSale(id: string) {
     try {
       setHeldSale(await apiFetch<HeldSale>(`/api/sales/${id}`));
+      heldCheckoutRequestId.current = null;
       setCart([]);
       setLastSale(null);
     } catch (err) {
@@ -284,17 +366,22 @@ export function PosView() {
     setProcessing(true);
     try {
       if (paymentMethod === "CARD") {
-        const clientRequestId = crypto.randomUUID();
+        heldCheckoutRequestId.current ||= crypto.randomUUID();
         const session = await apiFetch<{ url: string }>("/api/stripe/checkout", {
            method: "POST",
            body: JSON.stringify({
-              clientRequestId,
+               clientRequestId: heldCheckoutRequestId.current,
               saleId: heldSale.id,
               cashRegisterId: openRegister.id,
               cashSessionId: openRegister.sessions.find(s => s.cashierId === user.id)?.id
            })
         });
-        window.location.href = session.url;
+        try {
+          window.location.href = session.url;
+        } catch {
+          setError("No se pudo redirigir a Stripe. Verifica que no esté bloqueando popups.");
+          setProcessing(false);
+        }
         return;
       }
 
@@ -309,8 +396,8 @@ export function PosView() {
       setHeldSale(null);
       setLastSale(sale);
       setAmountTendered("");
-      setCardAuthorization("");
-      await load();
+      heldCheckoutRequestId.current = null;
+      await Promise.all([load(), loadStatic()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible cobrar.");
     } finally {
@@ -321,12 +408,57 @@ export function PosView() {
   function applyGlobalDiscount(amount: number) {
     setCart((current) => {
       if (current.length === 0) return current;
-      const perLine = amount / current.length;
-      return current.map((line) => {
-        const maxDiscount = Number(line.salePrice) * line.quantity;
-        return { ...line, discountAmount: Math.min(maxDiscount, perLine) };
+      let remaining = Math.round(amount * 100) / 100;
+      const result = current.map((line, index) => {
+        const maxDiscount = displayUnitPrice(line.salePrice) * line.quantity;
+        const share = remaining / (current.length - index);
+        const applied = Math.min(maxDiscount, share);
+        const rounded = Math.round(applied * 100) / 100;
+        remaining = Math.max(0, Math.round((remaining - rounded) * 100) / 100);
+        return { ...line, discountAmount: rounded };
       });
+      if (remaining > 0) {
+        for (const line of result) {
+          const capacity =
+            displayUnitPrice(line.salePrice) * line.quantity - line.discountAmount;
+          const extra = Math.min(capacity, remaining);
+          line.discountAmount =
+            Math.round((line.discountAmount + extra) * 100) / 100;
+          remaining = Math.max(0, Math.round((remaining - extra) * 100) / 100);
+          if (remaining === 0) break;
+        }
+      }
+      return result;
     });
+  }
+
+  async function replenishStock() {
+    if (!replenishProduct || !replenishQty) return;
+    const qty = Number(replenishQty);
+    if (qty <= 0 || !Number.isInteger(qty)) {
+      setError("La cantidad debe ser un número entero mayor a 0.");
+      return;
+    }
+    setReplenishLoading(true);
+    try {
+      await apiFetch("/api/inventory/adjustments", {
+        method: "POST",
+        body: JSON.stringify({
+          productId: replenishProduct,
+          quantity: qty,
+          reason: "Reabastecimiento desde punto de venta"
+        })
+      });
+      setShowReplenish(false);
+      setReplenishProduct("");
+      setReplenishQty("");
+      setMessage(`+${qty} unidades agregadas al inventario.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No fue posible reabastecer.");
+    } finally {
+      setReplenishLoading(false);
+    }
   }
 
   const checkoutTotal = heldSale ? Number(heldSale.total) : totals.total;
@@ -343,33 +475,46 @@ export function PosView() {
         title="Punto de venta"
         description="Busca productos, gestiona el carrito y cobra de forma rápida."
         actions={
-          openRegister ? (
-            <span className="badge !bg-[var(--success-tint)] !text-[var(--success)]">
-              <span className="h-2 w-2 rounded-full bg-[var(--success)]" />
-              {openRegister.code} abierta
-            </span>
-          ) : (
-            <Link className="btn btn-primary" href="/cash">Abrir caja</Link>
-          )
+          <div className="flex items-center gap-2">
+            {openRegister && user.permissions.includes("inventory.write") && (
+              <button className="btn btn-secondary !text-xs" onClick={() => setShowReplenish(true)}>
+                <PackagePlus size={14} /> Reabastecer
+              </button>
+            )}
+            {openRegister ? (
+              <span className="badge !bg-[var(--success-tint)] !text-[var(--success)]">
+                <span className="h-2 w-2 rounded-full bg-[var(--success)]" />
+                {openRegister.code} abierta
+              </span>
+            ) : (
+              <Link className="btn btn-primary" href="/cash">Abrir caja</Link>
+            )}
+          </div>
         }
       />
       <Notice type="error" message={error} />
       <Notice type="success" message={message} />
       {!openRegister && (
         <div className="rounded-2xl border border-[var(--warning)]/30 bg-[var(--warning-tint)] p-4 text-sm text-[var(--warning)]">
-          Debes abrir una sesión de caja antes de cobrar ventas.
+          Debes abrir una sesión de caja antes de cobrar ventas.{' '}
+          <Link className="underline underline-offset-2 font-semibold" href="/cash">Ir a caja</Link>
         </div>
       )}
       {lastSale && (
-        <div className="card flex flex-col gap-4 border-[var(--success)]/30 p-5 md:flex-row md:items-center md:justify-between">
+        <div className="card flex flex-col gap-4 border-[var(--success)]/30 bg-[var(--success-tint)] p-5 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-[var(--success)]">Venta completada</p>
             <h2 className="mt-1 text-xl font-bold">{lastSale.folio} · {formatMoney(lastSale.total, lastSale.currency)}</h2>
             {lastSale.changeAmount && <p className="text-sm text-[var(--muted)]">Cambio: {formatMoney(lastSale.changeAmount, lastSale.currency)}</p>}
           </div>
-          <a className="btn btn-primary" href={`/api/sales/${lastSale.id}/ticket`} target="_blank">
-            <Barcode size={16} /> Abrir ticket
-          </a>
+          <div className="flex gap-2">
+            <a className="btn btn-primary gap-2" href={`/api/sales/${lastSale.id}/ticket`} target="_blank">
+              <Printer size={16} /> Descargar ticket
+            </a>
+            <button className="btn btn-secondary gap-2" onClick={() => setLastSale(null)}>
+              Nueva venta
+            </button>
+          </div>
         </div>
       )}
 
@@ -397,17 +542,20 @@ export function PosView() {
           <div className="grid max-h-[650px] grid-cols-2 gap-3 overflow-y-auto p-4 sm:grid-cols-3 lg:grid-cols-4">
             {products.map((product) => (
               <button
-                className="group flex min-h-40 flex-col items-start rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-lg disabled:opacity-50"
-                disabled={!openRegister || Number(product.currentStock) <= 0}
+                className="group relative flex min-h-40 flex-col items-start rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-lg disabled:opacity-50"
+                disabled={!openRegister}
                 key={product.id}
                 onClick={() => addProduct(product)}
               >
+                {Number(product.currentStock) <= 0 && (
+                  <span className="absolute top-2 right-2 rounded-full bg-[var(--warning-tint)] px-2 py-0.5 text-[9px] font-semibold text-[var(--warning)]">Sin stock</span>
+                )}
                 <span className="grid h-12 w-12 place-items-center rounded-xl bg-[var(--primary-tint)] font-bold text-[var(--primary)] transition group-hover:bg-[var(--primary)] group-hover:text-white">
                   {product.name[0]}
                 </span>
                 <p className="mt-3 line-clamp-2 text-sm font-semibold leading-tight">{product.name}</p>
                 <div className="mt-auto flex w-full items-end justify-between pt-3">
-                  <span className="text-lg font-bold text-[var(--primary)]">{formatMoney(product.salePrice)}</span>
+                  <span className="text-lg font-bold text-[var(--primary)]">{formatMoney(displayUnitPrice(product.salePrice), currency)}</span>
                   <span className="rounded-full bg-[var(--surface-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">
                     {product.currentStock} disp.
                   </span>
@@ -437,10 +585,16 @@ export function PosView() {
                   <select
                     aria-label="Moneda de venta"
                     className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px]"
-                    onChange={(event) => setCurrency(event.target.value)}
+                    onChange={(event) => {
+                      setCurrency(event.target.value);
+                      setExchangeRate("1");
+                      setCart((current) =>
+                        current.map((line) => ({ ...line, discountAmount: 0 }))
+                      );
+                    }}
                     value={currency}
                   >
-                    {config.allowedCurrencies.map((item) => (
+                    {saleCurrencies.map((item) => (
                       <option key={item}>{item}</option>
                     ))}
                   </select>
@@ -470,7 +624,10 @@ export function PosView() {
           <div className="max-h-72 flex-1 space-y-2 overflow-y-auto p-4">
             {heldSale ? heldSale.items.map((line, index) => (
               <div className="subtle-card flex items-center justify-between p-3" key={index}>
-                <p className="text-xs font-semibold">{line.nameSnapshot}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold truncate">{line.nameSnapshot}</p>
+                  <p className="text-[10px] text-[var(--muted)]">{formatMoney(line.unitPrice, heldSale.currency)} c/u</p>
+                </div>
                 <span className="text-xs text-[var(--muted)]">x {line.quantity}</span>
               </div>
             )) : cart.length > 0 ? cart.map((line) => (
@@ -478,7 +635,7 @@ export function PosView() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold truncate">{line.name}</p>
-                    <p className="text-[10px] text-[var(--muted)]">{formatMoney(line.salePrice)} c/u</p>
+                    <p className="text-[10px] text-[var(--muted)]">{formatMoney(displayUnitPrice(line.salePrice), currency)} c/u</p>
                   </div>
                   <button
                     className="shrink-0 text-[var(--danger)] hover:opacity-70"
@@ -505,14 +662,15 @@ export function PosView() {
                   </div>
                   <span className="text-base font-bold">
                     {formatMoney(
-                      Number(line.salePrice) * line.quantity - line.discountAmount
+                      displayUnitPrice(line.salePrice) * line.quantity - line.discountAmount,
+                      currency
                     )}
                   </span>
                 </div>
                 {line.discountAmount > 0 && (
                   <div className="mt-2 flex items-center gap-1 text-[10px] text-[var(--success)]">
                     <Percent size={10} />
-                    Descuento: -{formatMoney(line.discountAmount)}
+                    Descuento: -{formatMoney(line.discountAmount, currency)}
                   </div>
                 )}
               </div>
@@ -541,9 +699,9 @@ export function PosView() {
               </div>
 
               {!heldSale && cart.length > 0 && (
-                <div className="mb-3">
+                <div className="mb-3 flex gap-2">
                   <button
-                    className="btn btn-secondary w-full text-xs"
+                    className="btn btn-secondary flex-1 text-xs"
                     onClick={() => setShowDiscountModal(true)}
                   >
                     <Percent size={14} /> Descuento
@@ -643,6 +801,40 @@ export function PosView() {
         onConfirm={() => { setCart([]); setShowClearConfirm(false); }}
         onCancel={() => setShowClearConfirm(false)}
       />
+
+      {showReplenish && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="card w-full max-w-md p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Reabastecer producto</h2>
+              <button className="text-[var(--muted)] hover:text-[var(--text)]" onClick={() => setShowReplenish(false)}>✕</button>
+            </div>
+            <p className="mt-1 text-xs text-[var(--muted)]">Agrega unidades al inventario de un producto.</p>
+            <div className="mt-4 space-y-3">
+              <label>
+                <span className="label">Producto</span>
+                <select className="field" value={replenishProduct} onChange={(e) => setReplenishProduct(e.target.value)}>
+                  <option value="">Seleccionar producto</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.sku} · {p.name} (actual: {p.currentStock} {p.unit})</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="label">Cantidad a agregar</span>
+                <input className="field" min="1" step="1" type="number" placeholder="1" value={replenishQty} onChange={(e) => setReplenishQty(e.target.value)} />
+                <span className="mt-0.5 block text-[10px] text-[var(--muted)]">Solo cantidades enteras.</span>
+              </label>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button className="btn btn-secondary" onClick={() => setShowReplenish(false)}>Cancelar</button>
+              <button className="btn btn-primary" disabled={replenishLoading || !replenishProduct || !replenishQty} onClick={replenishStock}>
+                {replenishLoading ? "Guardando..." : "Reabastecer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <DiscountModal
         open={showDiscountModal}

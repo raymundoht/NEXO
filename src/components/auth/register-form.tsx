@@ -9,6 +9,7 @@ import { PasswordStrength } from "@/components/auth/password-strength";
 
 type Challenge = {
   challengeId: string;
+  continuationToken: string;
   email: string;
   expiresInSeconds: number;
   resendInSeconds: number;
@@ -73,6 +74,7 @@ export function RegisterForm() {
           method: "POST",
           body: JSON.stringify({
             challengeId: challenge.challengeId,
+            continuationToken: challenge.continuationToken,
             code: String(form.get("code") || "").replace(/\s/g, "")
           })
         }
@@ -96,7 +98,10 @@ export function RegisterForm() {
         resendInSeconds: number;
       }>("/api/auth/register/resend", {
         method: "POST",
-        body: JSON.stringify({ challengeId: challenge.challengeId })
+        body: JSON.stringify({
+          challengeId: challenge.challengeId,
+          continuationToken: challenge.continuationToken
+        })
       });
       setSecondsToResend(result.resendInSeconds);
     } catch (err) {
@@ -114,7 +119,7 @@ export function RegisterForm() {
         </span>
         <h1 className="mt-5 text-3xl font-bold tracking-[-0.04em]">Cuenta verificada</h1>
         <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-          Tu acceso quedó guardado. Entra con <strong>{registeredEmail}</strong> y la contraseña que creaste.
+          Tu correo quedó verificado. Un administrador debe aprobar la cuenta <strong>{registeredEmail}</strong> antes del primer acceso.
         </p>
         <Link
           className="btn btn-primary mt-7 w-full"

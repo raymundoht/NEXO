@@ -1,0 +1,97 @@
+src/app/api/cash-sessions/[id]/close/route.ts(93,37): error TS2345: Argument of type 'number | Decimal' is not assignable to parameter of type 'Decimal'.
+  Type 'number' is not assignable to type 'Decimal'.
+src/app/api/cash-sessions/[id]/close/route.ts(94,36): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/cash-sessions/[id]/close/route.ts(95,29): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/cash-sessions/[id]/close/route.ts(95,39): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/cash-sessions/[id]/force-close/route.ts(47,37): error TS2345: Argument of type 'number | Decimal' is not assignable to parameter of type 'Decimal'.
+  Type 'number' is not assignable to type 'Decimal'.
+src/app/api/cash-sessions/[id]/movements/route.ts(41,26): error TS2339: Property 'isNegative' does not exist on type 'number'.
+src/app/api/cash-sessions/[id]/movements/route.ts(47,42): error TS2339: Property 'lt' does not exist on type 'number'.
+src/app/api/dashboard/route.ts(96,43): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/dashboard/route.ts(111,29): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/dashboard/route.ts(115,29): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/dashboard/route.ts(119,71): error TS2339: Property 'plus' does not exist on type 'number | Decimal'.
+  Property 'plus' does not exist on type 'number'.
+src/app/api/dashboard/route.ts(121,32): error TS2365: Operator '>' cannot be applied to types 'Decimal' and 'number'.
+src/app/api/dashboard/route.ts(122,9): error TS2322: Type 'Decimal' is not assignable to type 'number'.
+src/app/api/dashboard/route.ts(122,34): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/dashboard/route.ts(137,29): error TS2365: Operator '+' cannot be applied to types 'number | Decimal' and 'Decimal'.
+src/app/api/dashboard/route.ts(138,47): error TS2345: Argument of type '{ quantity: number; amount: Decimal; } | { quantity: number; amount: number; }' is not assignable to parameter of type '{ quantity: number; amount: Decimal; }'.
+  Type '{ quantity: number; amount: number; }' is not assignable to type '{ quantity: number; amount: Decimal; }'.
+    Types of property 'amount' are incompatible.
+      Type 'number' is not assignable to type 'Decimal'.
+src/app/api/dashboard/route.ts(151,31): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/dashboard/route.ts(151,48): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/dashboard/route.ts(162,31): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/dashboard/route.ts(163,39): error TS2365: Operator '+' cannot be applied to types 'number | Decimal' and 'Decimal'.
+src/app/api/dashboard/route.ts(164,41): error TS2345: Argument of type '{ productId: string; name: string; quantity: number; total: Decimal; } | { productId: string; name: string; quantity: number; total: number; }' is not assignable to parameter of type '{ productId: string; name: string; quantity: number; total: Decimal; }'.
+  Type '{ productId: string; name: string; quantity: number; total: number; }' is not assignable to type '{ productId: string; name: string; quantity: number; total: Decimal; }'.
+    Types of property 'total' are incompatible.
+      Type 'number' is not assignable to type 'Decimal'.
+src/app/api/dashboard/route.ts(188,47): error TS2339: Property 'comparedTo' does not exist on type 'number'.
+src/app/api/inventory-counts/[id]/complete/route.ts(98,26): error TS2339: Property 'isZero' does not exist on type 'number'.
+src/app/api/inventory/adjustments/route.ts(41,22): error TS2339: Property 'isNegative' does not exist on type 'number'.
+src/app/api/products/[id]/route.ts(69,31): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/products/[id]/route.ts(72,36): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/products/route.ts(147,27): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/products/route.ts(148,32): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/products/route.ts(156,11): error TS2322: Type 'Decimal' is not assignable to type 'number'.
+src/app/api/purchase-orders/[id]/receive/route.ts(93,26): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/purchase-orders/[id]/receive/route.ts(124,35): error TS2365: Operator '+' cannot be applied to types 'number | Decimal' and 'number'.
+src/app/api/purchase-orders/[id]/receive/route.ts(126,65): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/purchase-orders/[id]/receive/route.ts(189,20): error TS2339: Property 'mul' does not exist on type 'number'.
+src/app/api/purchase-orders/[id]/receive/route.ts(190,37): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/purchase-orders/route.ts(147,39): error TS2339: Property 'equals' does not exist on type 'number'.
+src/app/api/purchase-orders/route.ts(155,38): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/purchase-orders/route.ts(157,44): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/purchase-orders/route.ts(157,55): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/purchase-orders/route.ts(169,36): error TS2365: Operator '+' cannot be applied to types 'import("/Users/raymundoherrera/Desktop/Copia de Nexo-ERP-completo 2/node_modules/@prisma/client/runtime/library").Decimal' and 'import("/Users/raymundoherrera/Desktop/Copia de Nexo-ERP-completo 2/node_modules/@prisma/client/runtime/library").Decimal'.
+src/app/api/purchase-orders/route.ts(173,26): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(callbackfn: (previousValue: { productId: string; skuSnapshot: string; nameSnapshot: string; unitSnapshot: string; quantityOrdered: number; unitCost: Decimal; taxRate: number; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; }, currentValue: { ...; }, currentIndex: number, array: { ...; }[]) => { ...; }, initialValue: { ...; }): { ...; }', gave the following error.
+    Type '{ subtotal: Decimal; tax: Decimal; total: Decimal; }' is missing the following properties from type '{ productId: string; skuSnapshot: string; nameSnapshot: string; unitSnapshot: string; quantityOrdered: number; unitCost: Decimal; taxRate: number; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; }': productId, skuSnapshot, nameSnapshot, unitSnapshot, and 6 more.
+src/app/api/purchase-orders/route.ts(174,35): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/purchase-orders/route.ts(175,30): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/purchase-orders/route.ts(176,32): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/purchase-orders/route.ts(195,30): error TS2339: Property 'subtotal' does not exist on type '{ productId: string; skuSnapshot: string; nameSnapshot: string; unitSnapshot: string; quantityOrdered: number; unitCost: Decimal; taxRate: number; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; }'.
+src/app/api/purchase-orders/route.ts(196,30): error TS2339: Property 'tax' does not exist on type '{ productId: string; skuSnapshot: string; nameSnapshot: string; unitSnapshot: string; quantityOrdered: number; unitCost: Decimal; taxRate: number; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; }'.
+src/app/api/purchase-orders/route.ts(197,27): error TS2339: Property 'total' does not exist on type '{ productId: string; skuSnapshot: string; nameSnapshot: string; unitSnapshot: string; quantityOrdered: number; unitCost: Decimal; taxRate: number; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; }'.
+src/app/api/reports/sales/route.ts(89,9): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/reports/sales/route.ts(90,31): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/reports/sales/route.ts(94,31): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/reports/sales/route.ts(94,31): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/reports/sales/route.ts(94,44): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/reports/sales/route.ts(101,14): error TS2339: Property 'String' does not exist on type '{ id: string; productId: string; quantity: number; saleId: string; taxRate: Decimal; skuSnapshot: string; nameSnapshot: string; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; unitPrice: Decimal; unitCostSnapshot: Decimal; discountAmount: Decimal; }'.
+src/app/api/reports/sales/route.ts(101,21): error TS2304: Cannot find name 'quantity'.
+src/app/api/sales/[id]/refund/route.ts(114,21): error TS2532: Object is possibly 'undefined'.
+src/app/api/sales/[id]/refund/route.ts(145,44): error TS2339: Property 'gt' does not exist on type 'number'.
+src/app/api/sales/[id]/refund/route.ts(151,55): error TS2339: Property 'gte' does not exist on type 'number'.
+src/app/api/sales/[id]/refund/route.ts(152,27): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/sales/[id]/refund/route.ts(152,27): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/sales/[id]/refund/route.ts(152,44): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/app/api/sales/[id]/refund/route.ts(154,16): error TS2365: Operator '<=' cannot be applied to types 'Decimal' and 'number'.
+src/app/api/sales/[id]/refund/route.ts(160,11): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/sales/[id]/refund/route.ts(161,31): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/sales/[id]/refund/route.ts(285,36): error TS2339: Property 'gte' does not exist on type 'number'.
+src/app/api/sales/[id]/route.ts(40,25): error TS2339: Property 'String' does not exist on type '{ productId: string; quantity: number; id: string; amount: Decimal; refundId: string; saleItemId: string; }'.
+src/app/api/sales/[id]/route.ts(40,32): error TS2304: Cannot find name 'quantity'.
+src/app/api/sales/[id]/route.ts(53,25): error TS2339: Property 'String' does not exist on type '{ productId: string; quantity: number; unitPrice: Decimal; discountAmount: Decimal; taxRate: Decimal; lineSubtotal: Decimal; lineTax: Decimal; ... 5 more ...; unitCostSnapshot: Decimal; }'.
+src/app/api/sales/[id]/route.ts(53,32): error TS2304: Cannot find name 'quantity'.
+src/app/api/sales/[id]/ticket/route.ts(56,27): error TS2365: Operator '+' cannot be applied to types 'number' and 'Decimal'.
+src/app/api/sales/[id]/ticket/route.ts(81,24): error TS2339: Property 'String' does not exist on type '{ id: string; productId: string; quantity: number; saleId: string; taxRate: Decimal; skuSnapshot: string; nameSnapshot: string; lineSubtotal: Decimal; lineTax: Decimal; lineTotal: Decimal; unitPrice: Decimal; unitCostSnapshot: Decimal; discountAmount: Decimal; }'.
+src/app/api/sales/[id]/ticket/route.ts(81,31): error TS2304: Cannot find name 'quantity'.
+src/app/api/sales/[id]/ticket/route.ts(86,29): error TS2365: Operator '+' cannot be applied to types 'import("/Users/raymundoherrera/Desktop/Copia de Nexo-ERP-completo 2/node_modules/@prisma/client/runtime/library").Decimal' and 'import("/Users/raymundoherrera/Desktop/Copia de Nexo-ERP-completo 2/node_modules/@prisma/client/runtime/library").Decimal'.
+src/app/api/suppliers/[id]/products/route.ts(66,38): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/app/api/suppliers/[id]/products/route.ts(74,38): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/services/sales.ts(100,22): error TS2365: Operator '+' cannot be applied to types 'import("/Users/raymundoherrera/Desktop/Copia de Nexo-ERP-completo 2/node_modules/@prisma/client/runtime/library").Decimal' and 'import("/Users/raymundoherrera/Desktop/Copia de Nexo-ERP-completo 2/node_modules/@prisma/client/runtime/library").Decimal'.
+src/services/sales.ts(154,11): error TS2322: Type 'number' is not assignable to type 'Decimal'.
+src/services/sales.ts(155,16): error TS18047: 'amountTendered' is possibly 'null'.
+src/services/sales.ts(158,38): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/services/sales.ts(158,38): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/services/sales.ts(158,56): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/services/sales.ts(162,13): error TS2322: Type 'number' is not assignable to type 'Decimal'.
+src/services/sales.ts(310,9): error TS2322: Type 'number' is not assignable to type 'Decimal'.
+src/services/sales.ts(311,14): error TS18047: 'amountTendered' is possibly 'null'.
+src/services/sales.ts(314,36): error TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/services/sales.ts(314,36): error TS2345: Argument of type 'number' is not assignable to parameter of type 'Decimal'.
+src/services/sales.ts(314,54): error TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+src/services/sales.ts(455,21): error TS2304: Cannot find name 'quantity'.

@@ -12,14 +12,20 @@ type AuditInput = {
 };
 
 export async function audit(input: AuditInput) {
-  await db.auditLog.create({
-    data: {
-      userId: input.userId,
-      action: input.action,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      ipHash: hashIdentifier(input.ip),
-      metadata: input.metadata
-    }
-  });
+  try {
+    await db.auditLog.create({
+      data: {
+        userId: input.userId,
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        ipHash: hashIdentifier(input.ip),
+        metadata: input.metadata
+      }
+    });
+  } catch (error) {
+    // A committed business operation must not look failed and be repeated only
+    // because the secondary audit write was temporarily unavailable.
+    console.error("No fue posible guardar el evento de auditoría.", error);
+  }
 }

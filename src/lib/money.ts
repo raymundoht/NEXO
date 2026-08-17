@@ -3,7 +3,7 @@ import { ApiError } from "@/lib/api";
 
 export type CalculatedLine = {
   productId: string;
-  quantity: Prisma.Decimal;
+  quantity: number;
   unitPrice: Prisma.Decimal;
   discountAmount: Prisma.Decimal;
   taxRate: Prisma.Decimal;
@@ -20,23 +20,27 @@ export function roundMoney(value: Prisma.Decimal) {
   return value.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 }
 
+export function roundCost(value: Prisma.Decimal) {
+  return value.toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+}
+
 export function calculateLine(input: {
   productId: string;
-  quantity: Prisma.Decimal.Value;
+  quantity: number;
   unitPrice: Prisma.Decimal.Value;
   discountAmount?: Prisma.Decimal.Value;
   taxRate: Prisma.Decimal.Value;
 }): CalculatedLine {
-  const quantity = decimal(input.quantity);
+  const quantity = input.quantity;
   const unitPrice = decimal(input.unitPrice);
   const discountAmount = decimal(input.discountAmount || 0);
   const taxRate = decimal(input.taxRate);
 
-  if (quantity.lte(0) || unitPrice.lt(0) || discountAmount.lt(0)) {
+  if (quantity <= 0 || unitPrice.lt(0) || discountAmount.lt(0)) {
     throw new ApiError(400, "Cantidad, precio o descuento inválido.");
   }
 
-  const gross = roundMoney(quantity.mul(unitPrice));
+  const gross = roundMoney(unitPrice.mul(quantity));
   if (discountAmount.gt(gross)) {
     throw new ApiError(400, "El descuento no puede superar el importe.");
   }
@@ -59,9 +63,7 @@ export function calculateTotals(lines: CalculatedLine[]) {
   return lines.reduce(
     (total, line) => ({
       subtotal: roundMoney(total.subtotal.plus(line.lineSubtotal)),
-      discountTotal: roundMoney(
-        total.discountTotal.plus(line.discountAmount)
-      ),
+      discountTotal: roundMoney(total.discountTotal.plus(line.discountAmount)),
       taxTotal: roundMoney(total.taxTotal.plus(line.lineTax)),
       total: roundMoney(total.total.plus(line.lineTotal))
     }),

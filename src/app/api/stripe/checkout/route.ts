@@ -13,14 +13,35 @@ const checkoutSchema = z.object({
   cashSessionId: z.string().uuid()
 });
 
+const cancelSchema = z.object({ clientRequestId: z.string().uuid() });
+
 export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
     const actor = await requirePermission("pos.sell");
     const input = checkoutSchema.parse(await readJson(request));
 
-    const origin = process.env.APP_URL || "http://localhost:3000";
-    const env = process.env.STRIPE_SECRET_KEY?.includes("test") ? "TEST" : "LIVE";
+    if (!process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_")) {
+      throw new ApiError(503, "El cobro con Stripe sólo está habilitado en el entorno sandbox configurado.");
+    }
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      throw new ApiError(
+        503,
+        "Stripe no puede cobrar hasta configurar STRIPE_WEBHOOK_SECRET.",
+        "STRIPE_WEBHOOK_NOT_CONFIGURED"
+      );
+    }
+    const origin = process.env.APP_URL ||
+      (process.env.NODE_ENV === "development" ? "http://localhost:3000" : "");
+    if (!origin) {
+      throw new ApiError(503, "APP_URL es obligatoria para iniciar un pago con Stripe.");
+    }
+    try {
+      new URL(origin);
+    } catch {
+      throw new ApiError(503, "APP_URL no contiene una URL válida.");
+    }
+    const env = "TEST";
 
     let attemptId = "";
     let saleTotal: Prisma.Decimal = new Prisma.Decimal(0);
@@ -44,11 +65,24 @@ export async function POST(request: Request) {
             ) {
               throw new ApiError(409, "El clientRequestId ya se usó para otra transacción diferente.");
             }
-            if (['SUCCEEDED', 'FAILED', 'EXPIRED'].includes(existingAttempt.status)) {
+            if (['SUCCEEDED', 'FAILED', 'EXPIRED', 'REVIEW_REQUIRED'].includes(existingAttempt.status)) {
               throw new ApiError(409, "El intento de pago ya finalizó.");
             }
             const sale = await tx.sale.findUnique({ where: { id: input.saleId } });
             if (!sale) throw new ApiError(404, "Venta no encontrada.");
+            if (sale.status !== "HELD" || sale.cashierId !== actor.id) {
+              throw new ApiError(403, "La venta ya no está disponible para este cajero.");
+            }
+            await tx.$executeRaw`SELECT id FROM cash_sessions WHERE id = ${input.cashSessionId}::uuid FOR UPDATE`;
+            const currentSession = await tx.cashSession.findFirst({
+              where: {
+                id: input.cashSessionId,
+                cashRegisterId: input.cashRegisterId,
+                cashierId: actor.id,
+                status: "OPEN"
+              }
+            });
+            if (!currentSession) throw new ApiError(409, "La sesión de caja ya no está abierta.");
             
             return { attempt: existingAttempt, isNew: false, sale };
           }
@@ -59,6 +93,9 @@ export async function POST(request: Request) {
           });
           
           if (!sale) throw new ApiError(404, "Venta no encontrada.");
+          if (sale.cashierId !== actor.id) {
+            throw new ApiError(403, "No puedes cobrar la venta de otro cajero.");
+          }
           if (sale.status !== "HELD") {
             throw new ApiError(409, "La venta debe estar en espera para cobrar con tarjeta.");
           }
@@ -66,6 +103,7 @@ export async function POST(request: Request) {
             throw new ApiError(400, "Solo se permiten pagos en MXN con tarjeta.");
           }
 
+          await tx.$executeRaw`SELECT id FROM cash_sessions WHERE id = ${input.cashSessionId}::uuid FOR UPDATE`;
           const session = await tx.cashSession.findUnique({ where: { id: input.cashSessionId } });
           if (!session || session.status !== 'OPEN' || session.cashierId !== actor.id || session.cashRegisterId !== input.cashRegisterId) {
             throw new ApiError(403, "Caja o sesión inválida.");
@@ -172,6 +210,48 @@ export async function POST(request: Request) {
 
     return jsonOk({ url: session.url });
 
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    assertTrustedOrigin(request);
+    const actor = await requirePermission("pos.sell");
+    const input = cancelSchema.parse(await readJson(request));
+    const attempt = await db.paymentAttempt.findFirst({
+      where: { clientRequestId: input.clientRequestId, cashierId: actor.id }
+    });
+    if (!attempt) throw new ApiError(404, "Intento de pago no encontrado.");
+    if (["SUCCEEDED", "REVIEW_REQUIRED"].includes(attempt.status)) {
+      throw new ApiError(409, "El pago ya fue confirmado y no puede cancelarse.");
+    }
+    if (attempt.checkoutSessionId && !["FAILED", "EXPIRED"].includes(attempt.status)) {
+      try {
+        await stripe.checkout.sessions.expire(attempt.checkoutSessionId);
+      } catch {
+        // The session may already be expired; the conditional update below is authoritative.
+      }
+    }
+    await db.$transaction([
+      db.stockReservation.updateMany({
+        where: {
+          paymentAttemptId: attempt.id,
+          consumedAt: null,
+          releasedAt: null
+        },
+        data: { releasedAt: new Date() }
+      }),
+      db.paymentAttempt.updateMany({
+        where: {
+          id: attempt.id,
+          status: { in: ["PENDING", "PROCESSING"] }
+        },
+        data: { status: "EXPIRED", reasonCode: "CANCELLED_BY_CASHIER" }
+      })
+    ]);
+    return jsonOk({ cancelled: true });
   } catch (error) {
     return jsonError(error);
   }

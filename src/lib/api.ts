@@ -98,11 +98,19 @@ export async function readJson(request: Request) {
 
 export function getPagination(url: string, maxPageSize = 100) {
   const params = new URL(url).searchParams;
-  const page = Math.max(1, Number(params.get("page") || 1));
-  const pageSize = Math.min(
-    maxPageSize,
-    Math.max(1, Number(params.get("pageSize") || 25))
-  );
+  const rawPage = params.get("page");
+  const rawPageSize = params.get("pageSize");
+  const page = rawPage === null ? 1 : Number(rawPage);
+  const requestedPageSize = rawPageSize === null ? 25 : Number(rawPageSize);
+
+  if (!Number.isSafeInteger(page) || page < 1) {
+    throw new ApiError(400, "La página debe ser un entero mayor a cero.");
+  }
+  if (!Number.isSafeInteger(requestedPageSize) || requestedPageSize < 1) {
+    throw new ApiError(400, "El tamaño de página debe ser un entero mayor a cero.");
+  }
+
+  const pageSize = Math.min(maxPageSize, requestedPageSize);
 
   return {
     page,

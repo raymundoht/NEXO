@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 type CountSummary = {
   id: string;
@@ -36,6 +37,7 @@ export function InventoryCountsView() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,9 +98,21 @@ export function InventoryCountsView() {
   }
 
   async function complete() {
-    if (!selected || !confirm("¿Cerrar el conteo y aplicar todas las diferencias?")) return;
+    if (!selected) return;
+    const formElement = document.querySelector<HTMLFormElement>("#inventory-count-form");
+    if (!formElement) return;
+    const form = new FormData(formElement);
     try {
-      await apiFetch(`/api/inventory-counts/${selected.id}/complete`, { method: "POST" });
+      await apiFetch(`/api/inventory-counts/${selected.id}/complete`, {
+        method: "POST",
+        body: JSON.stringify({
+          items: selected.items.map((line) => ({
+            id: line.id,
+            countedQuantity: form.get(`count-${line.id}`),
+            notes: form.get(`notes-${line.id}`) || null
+          }))
+        })
+      });
       setMessage("Conteo cerrado y ajustes auditados.");
       setSelected(null);
       await load();
@@ -118,7 +132,7 @@ export function InventoryCountsView() {
       <Notice type="error" message={error} />
       <Notice type="success" message={message} />
       {selected ? (
-        <form className="card overflow-hidden" onSubmit={save}>
+        <form className="card overflow-hidden" id="inventory-count-form" onSubmit={save}>
           <div className="flex items-start justify-between border-b border-[var(--border)] p-5">
             <div><StatusBadge status={selected.status} /><h2 className="mt-2 text-lg font-bold">{selected.folio}</h2><p className="text-xs text-[var(--muted)]">{selected.items.length} productos</p></div>
             <button className="grid h-9 w-9 place-items-center rounded-xl hover:bg-[var(--surface-2)]" onClick={() => setSelected(null)} type="button"><X size={18} /></button>
@@ -139,7 +153,7 @@ export function InventoryCountsView() {
           {selected.status === "IN_PROGRESS" ? (
             <div className="flex flex-col gap-2 border-t border-[var(--border)] p-4 sm:flex-row sm:justify-end">
               <button className="btn btn-secondary">Guardar avance</button>
-              <button className="btn btn-primary" onClick={complete} type="button"><ClipboardCheck size={17} /> Cerrar conteo</button>
+              <button className="btn btn-primary" onClick={() => setShowCompleteConfirm(true)} type="button"><ClipboardCheck size={17} /> Cerrar conteo</button>
             </div>
           ) : null}
         </form>
@@ -159,6 +173,15 @@ export function InventoryCountsView() {
           </div>
         ) : <EmptyState title="Sin conteos físicos" description="Inicia un conteo general para auditar las existencias." />}
       </section>
+      <ConfirmDialog
+        open={showCompleteConfirm}
+        title="Cerrar conteo"
+        message="¿Cerrar el conteo y aplicar todas las diferencias al inventario?"
+        confirmLabel="Cerrar y aplicar"
+        variant="danger"
+        onConfirm={() => { setShowCompleteConfirm(false); complete(); }}
+        onCancel={() => setShowCompleteConfirm(false)}
+      />
     </div>
   );
 }

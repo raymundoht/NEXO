@@ -6,6 +6,8 @@ describe("RBAC", () => {
   it("limita al cajero al POS, ventas inmediatas y caja", () => {
     expect(can(Role.CASHIER, "pos.sell")).toBe(true);
     expect(can(Role.CASHIER, "cash.manage")).toBe(true);
+    expect(can(Role.CASHIER, "sales.refund")).toBe(false);
+    expect(can(Role.CASHIER, "settings.appearance")).toBe(false);
     expect(can(Role.CASHIER, "purchases.write")).toBe(false);
     expect(can(Role.CASHIER, "users.manage")).toBe(false);
   });

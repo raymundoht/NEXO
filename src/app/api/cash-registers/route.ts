@@ -6,7 +6,7 @@ import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
 
 export async function GET() {
   try {
-    await requirePermission("cash.manage");
+    const user = await requirePermission("cash.manage");
     const registers = await db.cashRegister.findMany({
       where: { active: true },
       include: {
@@ -23,7 +23,20 @@ export async function GET() {
       },
       orderBy: { name: "asc" }
     });
-    return jsonOk(registers);
+    return jsonOk(
+      registers.map((register) => ({
+        ...register,
+        sessions: register.sessions.map((session) =>
+          user.role === "ADMIN" || session.cashierId === user.id
+            ? session
+            : {
+                currency: session.currency,
+                openedAt: session.openedAt,
+                occupied: true
+              }
+        )
+      }))
+    );
   } catch (error) {
     return jsonError(error);
   }

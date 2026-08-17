@@ -4,12 +4,12 @@ import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
 import {
   assertTrustedOrigin,
   hashPassword,
-  hashToken
+  hashOneTimeCode,
+  safeHashMatches,
+  normalizeEmail
 } from "@/lib/security";
 import { strongPassword } from "@/lib/validators";
 import { audit } from "@/lib/audit";
-
-import { normalizeEmail } from "@/lib/security";
 
 const schema = z.object({
   email: z.string().email().max(320),
@@ -28,12 +28,47 @@ export async function POST(request: Request) {
       throw new ApiError(400, "El código es inválido o expiró.", "INVALID_RESET_CODE");
     }
 
-    const tokenHash = hashToken(input.code);
     const token = await db.passwordResetToken.findFirst({
-      where: { tokenHash, userId: user.id }
+      where: {
+        userId: user.id,
+        usedAt: null,
+        attempts: { lt: 5 },
+        expiresAt: { gt: new Date() }
+      },
+      orderBy: { createdAt: "desc" }
     });
 
-    if (!token || token.usedAt || token.expiresAt <= new Date()) {
+    if (!token) {
+      throw new ApiError(
+        400,
+        "El código es inválido o expiró.",
+        "INVALID_RESET_CODE"
+      );
+    }
+
+    const codeMatches = safeHashMatches(
+      hashOneTimeCode(token.id, input.code),
+      token.tokenHash
+    );
+    if (!codeMatches) {
+      await db.$transaction(async (tx) => {
+        const incremented = await tx.passwordResetToken.updateMany({
+          where: { id: token.id, usedAt: null, attempts: { lt: 5 } },
+          data: { attempts: { increment: 1 } }
+        });
+        if (incremented.count === 1) {
+          const current = await tx.passwordResetToken.findUnique({
+            where: { id: token.id },
+            select: { attempts: true }
+          });
+          if (current?.attempts === 5) {
+            await tx.passwordResetToken.update({
+              where: { id: token.id },
+              data: { usedAt: new Date() }
+            });
+          }
+        }
+      });
       throw new ApiError(
         400,
         "El código es inválido o expiró.",
@@ -47,6 +82,7 @@ export async function POST(request: Request) {
         where: {
           id: token.id,
           usedAt: null,
+          attempts: { lt: 5 },
           expiresAt: { gt: new Date() }
         },
         data: { usedAt: new Date() }
@@ -71,6 +107,10 @@ export async function POST(request: Request) {
       await tx.session.updateMany({
         where: { userId: token.userId, revokedAt: null },
         data: { revokedAt: new Date() }
+      });
+      await tx.passwordResetToken.updateMany({
+        where: { userId: token.userId, usedAt: null },
+        data: { usedAt: new Date() }
       });
     });
 

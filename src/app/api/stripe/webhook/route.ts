@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { headers } from "next/headers";
 import { stripe } from "@/lib/stripe";
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { fulfillSaleOnce } from "@/services/sales";
 import Stripe from "stripe";
+import { finalizeStripeRefund } from "@/services/stripe-refunds";
 
 export async function POST(request: Request) {
   const body = await request.text();
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
       return new Response("Ya procesado", { status: 200 });
     }
     if (webhookEvent.processingStatus === 'PROCESSING' && webhookEvent.lockedUntil && webhookEvent.lockedUntil > now) {
-      return new Response("Procesamiento en curso", { status: 200 });
+      return new Response("Procesamiento en curso", { status: 500 });
     }
 
     // Recover abandoned or retry
@@ -60,17 +60,23 @@ export async function POST(request: Request) {
     }
   } else {
     try {
-      webhookEvent = await db.paymentWebhookEvent.create({
-        data: {
+      webhookEvent = await db.paymentWebhookEvent.upsert({
+        where: { stripeEventId: event.id },
+        create: {
           stripeEventId: event.id,
           eventType: event.type,
           stripeObjectId: (event.data.object as Stripe.Event.Data.Object & { id?: string }).id || "",
           processingStatus: 'PROCESSING',
           lockedUntil: new Date(now.getTime() + 5 * 60000)
+        },
+        update: {
+          processingStatus: 'PROCESSING',
+          lockedUntil: new Date(now.getTime() + 5 * 60000)
         }
       });
-    } catch {
-      return new Response("Recibido concurrentemente", { status: 200 });
+    } catch (error) {
+      console.error("No fue posible reclamar el webhook de Stripe.", error);
+      return new Response("No fue posible guardar el evento", { status: 500 });
     }
   }
 
@@ -80,11 +86,14 @@ export async function POST(request: Request) {
       const session = await stripe.checkout.sessions.retrieve(stripeObject.id, { expand: ['payment_intent'] });
 
       if (
-        session.mode === 'payment' &&
-        session.payment_status === 'paid' &&
-        session.currency === 'mxn' &&
-        session.livemode === false
+        session.mode !== 'payment' ||
+        session.payment_status !== 'paid' ||
+        session.currency !== 'mxn' ||
+        session.livemode !== false
       ) {
+        throw new Error("La sesión pagada no coincide con el entorno o moneda autorizados.");
+      }
+      {
         const attemptId = session.metadata?.paymentAttemptId || session.client_reference_id;
         if (!attemptId) {
           throw new Error("No se pudo localizar el intento de pago.");
@@ -92,6 +101,7 @@ export async function POST(request: Request) {
 
         const intentId = typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id;
         const chargeId = typeof session.payment_intent !== 'string' ? session.payment_intent?.latest_charge : null;
+        if (!intentId) throw new Error("Stripe no devolvió un PaymentIntent confirmado.");
 
         // Check if we need to link it first (if it arrived before checkout endpoint saved it)
         const attempt = await db.paymentAttempt.findUnique({ where: { id: attemptId } });
@@ -108,7 +118,7 @@ export async function POST(request: Request) {
 
         await fulfillSaleOnce(
           session.id, 
-          intentId as string, 
+          intentId,
           typeof chargeId === 'string' ? chargeId : null,
           Number(session.amount_total)
         );
@@ -125,6 +135,29 @@ export async function POST(request: Request) {
            data: { status: 'EXPIRED' }
          })
        ]);
+    } else if (event.type === 'refund.updated') {
+      const providerRefund = event.data.object as Stripe.Refund;
+      const paymentRefundId = providerRefund.metadata?.paymentRefundId;
+      const localRefund = paymentRefundId
+        ? await db.paymentRefund.findUnique({ where: { id: paymentRefundId } })
+        : await db.paymentRefund.findUnique({
+            where: { stripeRefundId: providerRefund.id }
+          });
+      if (!localRefund) {
+        throw new Error("No se encontró la devolución local asociada a Stripe.");
+      }
+      if (providerRefund.status === "succeeded") {
+        await finalizeStripeRefund(localRefund.id, providerRefund.id);
+      } else if (providerRefund.status === "failed" || providerRefund.status === "canceled") {
+        await db.paymentRefund.update({
+          where: { id: localRefund.id },
+          data: {
+            status: "FAILED",
+            stripeRefundId: providerRefund.id,
+            error: `Stripe devolvió estado ${providerRefund.status}`
+          }
+        });
+      }
     }
 
     await db.paymentWebhookEvent.update({
@@ -135,7 +168,7 @@ export async function POST(request: Request) {
     return new Response(JSON.stringify({ received: true }), { status: 200 });
 
   } catch (err: unknown) {
-    const isRetryable = err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034' || (err instanceof Error && err.message.includes('deadlock'));
+    const isRetryable = (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') || (err instanceof Error && err.message.includes('deadlock'));
     const msg = err instanceof Error ? err.message : String(err);
     
     await db.paymentWebhookEvent.update({
@@ -147,10 +180,6 @@ export async function POST(request: Request) {
       }
     });
 
-    if (isRetryable) {
-      return new Response("Temporalmente indispuesto, reintente", { status: 500 });
-    } else {
-      return new Response("Error procesando evento, abortado de manera determinista", { status: 200 });
-    }
+    return new Response("No fue posible procesar el evento; reintente", { status: 500 });
   }
 }

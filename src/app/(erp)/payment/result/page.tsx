@@ -10,6 +10,6 @@ const PaymentResultView = dynamic(
 export const metadata: Metadata = { title: "Resultado del Pago" };
 
 export default async function PaymentResultPage() {
-  await requirePagePermission("sales.create");
+  await requirePagePermission("pos.sell");
   return <PaymentResultView />;
 }

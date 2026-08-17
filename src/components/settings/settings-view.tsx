@@ -66,10 +66,11 @@ export function SettingsView() {
 
   async function createRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     try {
-      await apiFetch("/api/cash-registers", { method: "POST", body: JSON.stringify({ code: form.get("code"), name: form.get("name") }) });
-      event.currentTarget.reset();
+      await apiFetch("/api/cash-registers", { method: "POST", body: JSON.stringify({ code: data.get("code"), name: data.get("name") }) });
+      form.reset();
       setMessage("Caja registrada.");
       await load();
     } catch (err) {

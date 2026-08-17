@@ -106,8 +106,20 @@ export function assertTrustedOrigin(request: Request) {
     throw new ApiError(403, "Origen de solicitud no permitido.", "CSRF_BLOCKED");
   }
 
-  const originHost = new URL(origin).host;
-  if (originHost !== host) {
+  try {
+    const originUrl = new URL(origin);
+    const expectedUrl =
+      process.env.NODE_ENV === "production" && process.env.APP_URL
+        ? new URL(process.env.APP_URL)
+        : new URL(
+            `${request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.slice(0, -1)}://${host}`
+          );
+    if (originUrl.origin === expectedUrl.origin) return;
+  } catch {
+    // Malformed origins are rejected below instead of becoming a 500 response.
+  }
+
+  {
     throw new ApiError(403, "Origen de solicitud no permitido.", "CSRF_BLOCKED");
   }
 }

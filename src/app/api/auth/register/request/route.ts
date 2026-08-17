@@ -7,9 +7,11 @@ import {
   assertTrustedOrigin,
   clientIp,
   generateNumericCode,
+  generateSecureToken,
   hashIdentifier,
   hashOneTimeCode,
   hashPassword,
+  hashToken,
   normalizeEmail,
   sanitizeText
 } from "@/lib/security";
@@ -82,7 +84,14 @@ export async function POST(request: Request) {
         "EMAIL_ALREADY_REGISTERED"
       );
     }
-    if (existing?.resendAt && existing.resendAt > now) {
+    if (existing && existing.expiresAt > now) {
+      if (existing.resendAt <= now) {
+        throw new ApiError(
+          409,
+          "Ya hay una verificación activa para ese correo. Usa el código enviado o la opción de reenvío.",
+          "VERIFICATION_ALREADY_PENDING"
+        );
+      }
       const seconds = Math.ceil((existing.resendAt.getTime() - now.getTime()) / 1000);
       throw new ApiError(
         429,
@@ -90,7 +99,7 @@ export async function POST(request: Request) {
         "CODE_COOLDOWN"
       );
     }
-    if (ipHash && requestsFromIp >= REGISTRATION_IP_LIMIT && !existing) {
+    if (ipHash && requestsFromIp >= REGISTRATION_IP_LIMIT) {
       throw new ApiError(
         429,
         "Demasiadas solicitudes de registro. Espera 15 minutos.",
@@ -98,7 +107,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const challengeId = existing?.id || randomUUID();
+    if (existing) {
+      await db.registrationVerification.deleteMany({
+        where: { id: existing.id, expiresAt: { lte: now } }
+      });
+    }
+    const challengeId = randomUUID();
+    const continuationToken = generateSecureToken(32);
     const code = generateNumericCode();
     const codeHash = hashOneTimeCode(challengeId, code);
     const passwordHash = await hashPassword(input.password);
@@ -106,25 +121,14 @@ export async function POST(request: Request) {
     const expiresAt = new Date(now.getTime() + REGISTRATION_CODE_TTL_MS);
     const resendAt = new Date(now.getTime() + REGISTRATION_RESEND_MS);
 
-    await db.registrationVerification.upsert({
-      where: { email },
-      create: {
+    await db.registrationVerification.create({
+      data: {
         id: challengeId,
         email,
         name,
         passwordHash,
         codeHash,
-        role: SELF_REGISTRATION_ROLE,
-        attempts: 0,
-        ipHash,
-        expiresAt,
-        resendAt,
-        lastSentAt: now
-      },
-      update: {
-        name,
-        passwordHash,
-        codeHash,
+        continuationHash: hashToken(continuationToken),
         role: SELF_REGISTRATION_ROLE,
         attempts: 0,
         ipHash,
@@ -137,26 +141,9 @@ export async function POST(request: Request) {
     try {
       await sendRegistrationCodeEmail({ to: email, name, code });
     } catch {
-      if (existing) {
-        await db.registrationVerification.updateMany({
-          where: { id: challengeId, codeHash },
-          data: {
-            name: existing.name,
-            passwordHash: existing.passwordHash,
-            codeHash: existing.codeHash,
-            role: existing.role,
-            attempts: existing.attempts,
-            ipHash: existing.ipHash,
-            expiresAt: existing.expiresAt,
-            resendAt: existing.resendAt,
-            lastSentAt: existing.lastSentAt
-          }
-        });
-      } else {
-        await db.registrationVerification.deleteMany({
-          where: { id: challengeId, codeHash }
-        });
-      }
+      await db.registrationVerification.deleteMany({
+        where: { id: challengeId, codeHash }
+      });
       throw new ApiError(
         503,
         "No fue posible enviar el código. Intenta nuevamente.",
@@ -174,6 +161,7 @@ export async function POST(request: Request) {
 
     return jsonOk({
       challengeId,
+      continuationToken,
       email,
       expiresInSeconds: REGISTRATION_CODE_TTL_MS / 1000,
       resendInSeconds: REGISTRATION_RESEND_MS / 1000

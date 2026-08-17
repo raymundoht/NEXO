@@ -1,10 +1,10 @@
-import { CashMovementType } from "@prisma/client";
+import { CashMovementType, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
 import { requirePermission } from "@/lib/auth";
 import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
-import { decimal } from "@/lib/money";
+import { } from "@/lib/money";
 
 const schema = z.object({
   type: z.enum(["CASH_IN", "CASH_OUT"]),
@@ -21,29 +21,47 @@ export async function POST(
     const user = await requirePermission("cash.manage");
     const { id } = await context.params;
     const input = schema.parse(await readJson(request));
-    const session = await db.cashSession.findFirst({
-      where: {
-        id,
-        status: "OPEN",
-        ...(user.role === "ADMIN" ? {} : { cashierId: user.id })
-      }
-    });
-    if (!session) throw new ApiError(404, "Sesión de caja abierta no encontrada.");
-    const signedAmount =
-      input.type === "CASH_OUT"
-        ? decimal(input.amount).negated()
-        : decimal(input.amount);
-    const movement = await db.cashMovement.create({
-      data: {
-        cashSessionId: session.id,
-        userId: user.id,
-        type: CashMovementType[input.type],
-        amount: signedAmount,
-        currency: session.currency,
-        referenceType: "ManualCashMovement",
-        notes: sanitizeText(input.notes, 300)
-      }
-    });
+    const movement = await db.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT id FROM cash_sessions WHERE id = ${id}::uuid FOR UPDATE`;
+        const session = await tx.cashSession.findFirst({
+          where: {
+            id,
+            status: "OPEN",
+            ...(user.role === "ADMIN" ? {} : { cashierId: user.id })
+          }
+        });
+        if (!session) {
+          throw new ApiError(404, "Sesión de caja abierta no encontrada.");
+        }
+        const signedAmount =
+          input.type === "CASH_OUT"
+            ? (-input.amount)
+            : Number(input.amount);
+        if (signedAmount < 0) {
+          const aggregate = await tx.cashMovement.aggregate({
+            where: { cashSessionId: id, currency: session.currency },
+            _sum: { amount: true }
+          });
+          const available = Number(aggregate._sum.amount || 0);
+          if ((available + signedAmount) < 0) {
+            throw new ApiError(409, "El retiro supera el efectivo esperado en la caja.");
+          }
+        }
+        return tx.cashMovement.create({
+          data: {
+            cashSessionId: session.id,
+            userId: user.id,
+            type: CashMovementType[input.type],
+            amount: signedAmount,
+            currency: session.currency,
+            referenceType: "ManualCashMovement",
+            notes: sanitizeText(input.notes, 300)
+          }
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
     return jsonOk({ ...movement, id: movement.id.toString() }, 201);
   } catch (error) {
     return jsonError(error);

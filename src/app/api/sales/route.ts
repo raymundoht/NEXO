@@ -6,7 +6,7 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { getPagination, jsonError, jsonOk, readJson } from "@/lib/api";
+import { ApiError, getPagination, jsonError, jsonOk, readJson } from "@/lib/api";
 import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin } from "@/lib/security";
 import {
@@ -17,8 +17,10 @@ import {
 } from "@/lib/validators";
 import { createSale } from "@/services/sales";
 import { audit } from "@/lib/audit";
+import { parseBusinessDate } from "@/lib/export";
 
 const schema = z.object({
+  clientRequestId: uuid,
   mode: z.enum(["HOLD", "COMPLETE"]).default("COMPLETE"),
   customerName: z.string().trim().max(160).optional().nullable(),
   currency: currency.default("MXN"),
@@ -53,6 +55,17 @@ export async function GET(request: Request) {
     const from = searchParams.get("from");
     const to = searchParams.get("to");
     const cashierId = searchParams.get("cashierId");
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
+    try {
+      fromDate = from ? parseBusinessDate(from) : undefined;
+      toDate = to ? parseBusinessDate(to, true) : undefined;
+    } catch {
+      throw new ApiError(400, "El rango de fechas es inválido.");
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      throw new ApiError(400, "La fecha inicial no puede ser posterior a la final.");
+    }
     const cashierCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const where: Prisma.SaleWhereInput = {
       ...(user.role === Role.ADMIN
@@ -63,11 +76,11 @@ export async function GET(request: Request) {
       ...(status && Object.values(SaleStatus).includes(status)
         ? { status }
         : {}),
-      ...(user.role === Role.ADMIN && (from || to)
+      ...(user.role === Role.ADMIN && (fromDate || toDate)
         ? {
             createdAt: {
-              ...(from ? { gte: new Date(from) } : {}),
-              ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {})
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {})
             }
           }
         : {})
@@ -97,17 +110,19 @@ export async function POST(request: Request) {
     assertTrustedOrigin(request);
     const user = await requirePermission("pos.sell");
     const input = schema.parse(await readJson(request));
-    const sale = await createSale(user, input);
-    const metadata = await requestMetadata();
-    await audit({
-      userId: user.id,
-      action: input.mode === "HOLD" ? "SALE_HELD" : "SALE_COMPLETED",
-      entityType: "Sale",
-      entityId: sale.id,
-      ip: metadata.ip,
-      metadata: { folio: sale.folio, total: sale.total.toString() }
-    });
-    return jsonOk(sale, 201);
+    const result = await createSale(user, input);
+    if (result.created) {
+      const metadata = await requestMetadata();
+      await audit({
+        userId: user.id,
+        action: input.mode === "HOLD" ? "SALE_HELD" : "SALE_COMPLETED",
+        entityType: "Sale",
+        entityId: result.sale.id,
+        ip: metadata.ip,
+        metadata: { folio: result.sale.folio, total: result.sale.total.toString() }
+      });
+    }
+    return jsonOk(result.sale, result.created ? 201 : 200);
   } catch (error) {
     return jsonError(error);
   }

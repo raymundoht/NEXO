@@ -8,26 +8,23 @@ export default function GlobalError({
   reset: () => void;
 }) {
   return (
-    <html lang="es">
-      <body>
-        <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-6">
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: "var(--surface, #f8fafc)" }}>
           <div className="max-w-md w-full text-center space-y-4">
-            <div className="h-16 w-16 mx-auto rounded-full bg-red-50 flex items-center justify-center">
-              <span className="text-2xl">!</span>
+            <div className="h-16 w-16 mx-auto rounded-full flex items-center justify-center" style={{ backgroundColor: "var(--danger-tint, #fef2f2)" }}>
+              <span className="text-2xl" style={{ color: "var(--danger, #dc2626)" }}>!</span>
             </div>
-            <h1 className="text-xl font-bold text-gray-900">Algo salió mal</h1>
-            <p className="text-sm text-gray-500">
-              {error.message || "Ocurrió un error inesperado. Intenta de nuevo."}
+            <h1 className="text-xl font-bold" style={{ color: "var(--text, #1e293b)" }}>Algo salió mal</h1>
+            <p className="text-sm" style={{ color: "var(--muted, #64748b)" }}>
+              Ocurrió un error inesperado. Intenta de nuevo.
+              {error.digest ? ` Referencia: ${error.digest}.` : ""}
             </p>
             <button
               onClick={reset}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#2563eb] text-white text-sm font-semibold rounded-lg hover:bg-[#1d4ed8] transition-colors"
+              className="btn btn-primary"
             >
               Intentar de nuevo
             </button>
           </div>
-        </div>
-      </body>
-    </html>
+    </div>
   );
 }

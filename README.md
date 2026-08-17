@@ -41,6 +41,7 @@ Requisitos: Node.js 20.9 o superior y PostgreSQL 15 o superior.
 ```bash
 npm install
 cp .env.example .env
+# Define SEED_ADMIN_EMAIL y una SEED_ADMIN_PASSWORD única y robusta.
 npm run db:generate
 npm run db:migrate
 npm run db:seed

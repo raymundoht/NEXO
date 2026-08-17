@@ -37,7 +37,7 @@ export async function GET(
         refundedByItem.set(
           item.saleItemId,
           (refundedByItem.get(item.saleItemId) || 0) +
-            Number(item.quantity.toString())
+            Number(item.quantity)
         );
       });
     });
@@ -50,7 +50,7 @@ export async function GET(
           quantityRefunded,
           quantityAvailableToRefund: Math.max(
             0,
-            Number(item.quantity.toString()) - quantityRefunded
+            Number(item.quantity) - quantityRefunded
           )
         };
       })

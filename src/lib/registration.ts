@@ -10,7 +10,7 @@ export const SELF_REGISTRATION_ROLE = Role.CASHIER;
 export function selfRegistrationEnabled() {
   const configured = process.env.SELF_REGISTRATION_ENABLED;
   if (configured !== undefined) return configured === "true";
-  return process.env.NODE_ENV !== "production";
+  return false;
 }
 
 export function allowedRegistrationDomains() {

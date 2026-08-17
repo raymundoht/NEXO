@@ -70,6 +70,10 @@ export async function POST(request: Request) {
         },
         data: { revokedAt: new Date() }
       });
+      await tx.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() }
+      });
     });
 
     await audit({

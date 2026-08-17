@@ -137,6 +137,67 @@ export async function sendEmailConfigurationTest(to: string) {
   });
 }
 
+export async function sendSupplierRestockRequestEmail(input: {
+  to: string;
+  supplierName: string;
+  businessName: string;
+  items: Array<{
+    productName: string;
+    sku: string;
+    currentAllocation: number;
+    totalReceived: number;
+    additionalNeeded: number;
+  }>;
+}) {
+  const transport = createTransport();
+  if (!transport) {
+    console.warn("[RESTOCK EMAIL] SMTP no configurado. No se envió la solicitud al proveedor:", input.to);
+    return;
+  }
+
+  const accentColor = await getAccentColor();
+
+  const itemRows = input.items.map((item) =>
+    `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">${escapeHtml(item.productName)}<br><span style="color:#67708a;font-size:12px">${escapeHtml(item.sku)}</span></td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${item.currentAllocation}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center">${item.totalReceived}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:700;color:${accentColor}">${item.additionalNeeded}</td>
+    </tr>`
+  ).join("");
+
+  const plainItems = input.items.map((item) =>
+    `- ${item.productName} (${item.sku}): Cuota ${item.currentAllocation}, Recibido ${item.totalReceived}, Necesario adicional: ${item.additionalNeeded}`
+  ).join("\n");
+
+  await transport.sendMail({
+    from: process.env.SMTP_FROM || "NEXO ERP <no-reply@example.com>",
+    to: input.to,
+    subject: `Solicitud de reabastecimiento — ${escapeHtml(input.businessName)}`,
+    text: `Estimado ${input.supplierName},\n\nLe escribimos de ${input.businessName} para solicitar un incremento en la cuota de abastecimiento de los siguientes productos:\n\n${plainItems}\n\nLe agradecemos nos confirme la disponibilidad y nuevas cantidades asignadas.\n\nSaludos cordiales,\n${input.businessName}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;color:#18213d;max-width:640px">
+        <h1 style="font-size:22px">Solicitud de reabastecimiento</h1>
+        <p>Estimado <strong>${escapeHtml(input.supplierName)}</strong>,</p>
+        <p>Le escribimos de <strong>${escapeHtml(input.businessName)}</strong> para solicitar un incremento en la cuota de abastecimiento de los siguientes productos:</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">
+          <thead>
+            <tr style="background:#f3f4f6">
+              <th style="padding:8px 12px;text-align:left">Producto</th>
+              <th style="padding:8px 12px;text-align:center">Cuota actual</th>
+              <th style="padding:8px 12px;text-align:center">Recibido</th>
+              <th style="padding:8px 12px;text-align:center">Adicional solicitado</th>
+            </tr>
+          </thead>
+          <tbody>${itemRows}</tbody>
+        </table>
+        <p>Le agradecemos nos confirme la disponibilidad y las nuevas cantidades asignadas a la brevedad.</p>
+        <p style="color:#67708a;font-size:13px;margin-top:24px">Saludos cordiales,<br><strong>${escapeHtml(input.businessName)}</strong></p>
+      </div>
+    `
+  });
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")

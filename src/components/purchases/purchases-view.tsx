@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CirclePlus, FileDown, Minus, PackageCheck, Plus, Sparkles, X } from "lucide-react";
 import { apiFetch, formatDate, formatMoney } from "@/lib/client-api";
 import { PageHeader } from "@/components/ui/page-header";
@@ -27,6 +27,9 @@ type Order = {
   total: string;
   currency: string;
   createdAt: string;
+  supplierCodeSnapshot: string;
+  supplierNameSnapshot: string;
+  buyerNameSnapshot: string;
   supplier: Supplier;
   buyer: { name: string };
   _count: { items: number; receipts: number };
@@ -37,6 +40,9 @@ type OrderDetail = Order & {
     quantityOrdered: string;
     quantityReceived: string;
     unitCost: string;
+    skuSnapshot: string;
+    nameSnapshot: string;
+    unitSnapshot: string;
     product: Product;
   }>;
   receipts: Array<{
@@ -45,7 +51,16 @@ type OrderDetail = Order & {
     receivedAt: string;
     supplierDocument?: string | null;
     receivedBy: { name: string };
-    items: Array<{ id: string; quantity: string; unitCost: string }>;
+    items: Array<{
+      id: string;
+      quantity: string;
+      unitCost: string;
+      purchaseOrderItem: {
+        skuSnapshot: string;
+        nameSnapshot: string;
+        unitSnapshot: string;
+      };
+    }>;
   }>;
 };
 type SupplierDetail = Supplier & {
@@ -54,6 +69,9 @@ type SupplierDetail = Supplier & {
     referenceCost: string;
     currency: string;
     isPreferred: boolean;
+    allocatedQty?: string | null;
+    totalReceived?: string | null;
+    availableQty?: string | null;
   }>;
 };
 
@@ -75,6 +93,13 @@ export function PurchasesView() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [draftNotes, setDraftNotes] = useState("");
+  const [orderCurrency, setOrderCurrency] = useState("MXN");
+  const [purchaseExchangeRate, setPurchaseExchangeRate] = useState("1");
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const createRequestId = useRef<string | null>(null);
+  const receiveRequestId = useRef<string | null>(null);
+  const [quotaMap, setQuotaMap] = useState<Map<string, { allocated: number; received: number; available: number }>>(new Map());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,7 +110,7 @@ export function PurchasesView() {
       if (to) params.set("to", to);
       const [orderResult, supplierResult, productResult] = await Promise.all([
         apiFetch<{ items: Order[] }>(`/api/purchase-orders?${params.toString()}`),
-        apiFetch<{ items: Supplier[] }>("/api/suppliers?pageSize=100"),
+        apiFetch<{ items: Supplier[] }>("/api/suppliers?pageSize=100&active=true"),
         apiFetch<{ items: Product[] }>("/api/products?pageSize=500")
       ]);
       setOrders(orderResult.items);
@@ -119,10 +144,14 @@ export function PurchasesView() {
   async function createOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    createRequestId.current ||= crypto.randomUUID();
+    setSaving(true);
+    setError("");
     try {
       await apiFetch("/api/purchase-orders", {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: createRequestId.current,
           supplierId: form.get("supplierId"),
           currency: form.get("currency"),
           exchangeRate: form.get("exchangeRate"),
@@ -135,10 +164,16 @@ export function PurchasesView() {
       setShowForm(false);
       setLines([{ productId: "", quantity: 1, unitCost: 0 }]);
       setDraftNotes("");
+      setOrderCurrency("MXN");
+      setPurchaseExchangeRate("1");
+      setSelectedSupplierId("");
+      createRequestId.current = null;
       setMessage("Orden de compra emitida.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible emitir.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -167,21 +202,24 @@ export function PurchasesView() {
       `Orden preparada desde ${shortages.length} faltantes detectados en Almacén.`
     );
     setShowForm(true);
+    createRequestId.current = null;
     setSelected(null);
     setMessage("Faltantes cargados. Selecciona el proveedor y confirma costos.");
   }
 
-  async function applySupplierPrices(supplierId: string) {
+  async function applySupplierPrices(
+    supplierId: string,
+    requestedCurrency = orderCurrency
+  ) {
     if (!supplierId) return;
     try {
       const supplier = await apiFetch<SupplierDetail>(
         `/api/suppliers/${supplierId}`
       );
       const prices = new Map(
-        supplier.productPrices.map((price) => [
-          price.productId,
-          Number(price.referenceCost)
-        ])
+        supplier.productPrices
+          .filter((price) => price.currency === requestedCurrency)
+          .map((price) => [price.productId, Number(price.referenceCost)])
       );
       setLines((current) =>
         current.map((line) => ({
@@ -189,6 +227,18 @@ export function PurchasesView() {
           unitCost: prices.get(line.productId) ?? line.unitCost
         }))
       );
+      // Build quota map
+      const newQuotaMap = new Map<string, { allocated: number; received: number; available: number }>();
+      for (const sp of supplier.productPrices) {
+        if (sp.allocatedQty != null) {
+          newQuotaMap.set(sp.productId, {
+            allocated: Number(sp.allocatedQty),
+            received: Number(sp.totalReceived || 0),
+            available: Number(sp.availableQty || 0)
+          });
+        }
+      }
+      setQuotaMap(newQuotaMap);
     } catch (err) {
       setError(
         err instanceof Error
@@ -201,6 +251,7 @@ export function PurchasesView() {
   async function openOrder(id: string) {
     try {
       setSelected(await apiFetch<OrderDetail>(`/api/purchase-orders/${id}`));
+      receiveRequestId.current = null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible consultar.");
     }
@@ -217,20 +268,34 @@ export function PurchasesView() {
         unitCost: Number(line.unitCost)
       }))
       .filter((line) => line.quantity > 0);
+    if (!items.length) {
+      setError("Captura al menos una cantidad mayor a cero.");
+      return;
+    }
+    if (!window.confirm(`Se registrará la recepción de ${items.length} partida(s). ¿Continuar?`)) {
+      return;
+    }
+    receiveRequestId.current ||= crypto.randomUUID();
+    setSaving(true);
+    setError("");
     try {
       await apiFetch(`/api/purchase-orders/${selected.id}/receive`, {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: receiveRequestId.current,
           supplierDocument: form.get("supplierDocument") || null,
           notes: form.get("notes") || null,
           items
         })
       });
       setSelected(null);
+      receiveRequestId.current = null;
       setMessage("Recepción registrada y existencias actualizadas.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible recibir.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -251,7 +316,10 @@ export function PurchasesView() {
               <button className="btn btn-secondary" onClick={createFromShortages}>
                 <Sparkles size={17} /> Desde faltantes
               </button>
-              <button className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>
+              <button className="btn btn-primary" onClick={() => setShowForm((v) => {
+                if (v) createRequestId.current = null;
+                return !v;
+              })}>
                 {showForm ? <X size={17} /> : <CirclePlus size={17} />}
                 {showForm ? "Cerrar" : "Nueva orden"}
               </button>
@@ -267,7 +335,10 @@ export function PurchasesView() {
           <div className="grid gap-4 md:grid-cols-4">
             <label className="md:col-span-2">
               <span className="label">Proveedor</span>
-              <select className="field" name="supplierId" onChange={(event) => void applySupplierPrices(event.target.value)} required>
+              <select className="field" name="supplierId" value={selectedSupplierId} onChange={(event) => {
+                setSelectedSupplierId(event.target.value);
+                void applySupplierPrices(event.target.value);
+              }} required>
                 <option value="">Seleccionar</option>
                 {suppliers.map((supplier) => (
                   <option key={supplier.id} value={supplier.id}>{supplier.code} · {supplier.legalName}</option>
@@ -276,9 +347,14 @@ export function PurchasesView() {
             </label>
             <label>
               <span className="label">Moneda</span>
-              <select className="field" name="currency" defaultValue="MXN"><option>MXN</option><option>USD</option></select>
+              <select className="field" name="currency" value={orderCurrency} onChange={(event) => {
+                const nextCurrency = event.target.value;
+                setOrderCurrency(nextCurrency);
+                setPurchaseExchangeRate("1");
+                if (selectedSupplierId) void applySupplierPrices(selectedSupplierId, nextCurrency);
+              }}><option>MXN</option><option>USD</option></select>
             </label>
-            <Input label="Tipo de cambio" name="exchangeRate" type="number" step="0.000001" defaultValue="1" required />
+            <Input label="Tipo de cambio" name="exchangeRate" type="number" min="0.000001" step="0.000001" value={purchaseExchangeRate} onChange={(event) => setPurchaseExchangeRate(event.target.value)} required />
             <Input label="Entrega esperada" name="expectedAt" type="date" />
             <Input label="Notas" name="notes" className="md:col-span-3" value={draftNotes} onChange={(event) => setDraftNotes(event.target.value)} />
           </div>
@@ -294,30 +370,42 @@ export function PurchasesView() {
               </button>
             </div>
             <div className="space-y-3 p-4">
-              {lines.map((line, index) => (
-                <div className="grid gap-3 md:grid-cols-[1fr_140px_160px_40px]" key={index}>
-                  <select className="field" required value={line.productId} onChange={(e) => updateLine(index, "productId", e.target.value)}>
-                    <option value="">Selecciona un producto</option>
-                    {products.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name}</option>)}
-                  </select>
-                  <input className="field" min="0.001" step="0.001" type="number" value={line.quantity} onChange={(e) => updateLine(index, "quantity", e.target.value)} />
-                  <input className="field" min="0" step="0.01" type="number" value={line.unitCost} onChange={(e) => updateLine(index, "unitCost", e.target.value)} />
-                  <button
-                    aria-label="Quitar partida"
-                    className="grid h-10 w-10 place-items-center rounded-xl text-[var(--danger)] hover:bg-[var(--danger-tint)]"
-                    disabled={lines.length === 1}
-                    onClick={() => setLines((current) => current.filter((_, i) => i !== index))}
-                    type="button"
-                  >
-                    <Minus size={16} />
-                  </button>
-                </div>
-              ))}
+              {lines.map((line, index) => {
+                const quota = line.productId ? quotaMap.get(line.productId) : undefined;
+                const exceedsQuota = quota && (quota.received + line.quantity) > quota.allocated;
+                return (
+                  <div key={index}>
+                    <div className="grid gap-3 md:grid-cols-[1fr_140px_160px_40px]">
+                      <select className="field" required value={line.productId} onChange={(e) => updateLine(index, "productId", e.target.value)}>
+                        <option value="">Selecciona un producto</option>
+                        {products.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name}</option>)}
+                      </select>
+                       <input className="field" min="0.001" step="0.001" type="number" value={line.quantity} onChange={(e) => updateLine(index, "quantity", e.target.value)} />
+                       <input className="field" min="0" step="0.0001" type="number" value={line.unitCost} onChange={(e) => updateLine(index, "unitCost", e.target.value)} />
+                      <button
+                        aria-label="Quitar partida"
+                        className="grid h-10 w-10 place-items-center rounded-xl text-[var(--danger)] hover:bg-[var(--danger-tint)]"
+                        disabled={lines.length === 1}
+                        onClick={() => setLines((current) => current.filter((_, i) => i !== index))}
+                        type="button"
+                      >
+                        <Minus size={16} />
+                      </button>
+                    </div>
+                    {quota && (
+                      <p className={`mt-1 text-[11px] ${exceedsQuota ? "text-[var(--warning)] font-semibold" : "text-[var(--muted)]"}`}>
+                        Cuota: {quota.available} de {quota.allocated} disponibles
+                        {exceedsQuota && " — Se excede la cuota. Se notificará al proveedor."}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="mt-5 flex items-center justify-between">
-            <p className="text-sm text-[var(--muted)]">Subtotal estimado: <strong className="text-[var(--text)]">{formatMoney(estimatedTotal)}</strong></p>
-            <button className="btn btn-primary">Emitir orden</button>
+            <p className="text-sm text-[var(--muted)]">Subtotal estimado: <strong className="text-[var(--text)]">{formatMoney(estimatedTotal, orderCurrency)}</strong></p>
+            <button className="btn btn-primary" disabled={saving}>{saving ? "Emitiendo..." : "Emitir orden"}</button>
           </div>
         </form>
       ) : null}
@@ -327,8 +415,8 @@ export function PurchasesView() {
           <div className="flex items-start justify-between">
             <div>
               <span className="badge">{selected.folio}</span>
-              <h2 className="mt-2 text-lg font-semibold">{selected.supplier.legalName}</h2>
-              <p className="text-xs text-[var(--muted)]">Orden emitida {formatDate(selected.createdAt)} · Comprador: {selected.buyer.name}</p>
+              <h2 className="mt-2 text-lg font-semibold">{selected.supplierNameSnapshot}</h2>
+              <p className="text-xs text-[var(--muted)]">Orden emitida {formatDate(selected.createdAt)} · Comprador: {selected.buyerNameSnapshot}</p>
             </div>
             <button className="grid h-9 w-9 place-items-center rounded-xl hover:bg-[var(--surface-2)]" onClick={() => setSelected(null)}><X size={18} /></button>
           </div>
@@ -341,9 +429,9 @@ export function PurchasesView() {
                     const pending = Number(line.quantityOrdered) - Number(line.quantityReceived);
                     return (
                       <tr key={line.id}>
-                        <td><p className="font-semibold">{line.product.name}</p><p className="text-[11px] text-[var(--muted)]">{line.product.sku}</p></td>
+                        <td><p className="font-semibold">{line.nameSnapshot}</p><p className="text-[11px] text-[var(--muted)]">{line.skuSnapshot} · {line.unitSnapshot}</p></td>
                         <td>{formatMoney(line.unitCost, selected.currency)}</td><td>{line.quantityOrdered}</td><td>{line.quantityReceived}</td><td>{pending}</td>
-                        <td><input className="field !w-32" defaultValue={pending} disabled={!canReceive || pending <= 0} max={pending} min="0" name={`quantity-${line.id}`} step="0.001" type="number" /></td>
+                         <td><input className="field !w-32" defaultValue="0" disabled={!canReceive || pending <= 0} max={pending} min="0" name={`quantity-${line.id}`} step="0.001" type="number" /></td>
                       </tr>
                     );
                   })}
@@ -354,7 +442,7 @@ export function PurchasesView() {
               <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end">
                 <Input label="Documento del proveedor" name="supplierDocument" />
                 <Input label="Notas de recepción" name="notes" className="flex-1" />
-                <button className="btn btn-primary"><PackageCheck size={17} /> Validar recepción</button>
+                <button className="btn btn-primary" disabled={saving}><PackageCheck size={17} /> {saving ? "Registrando..." : "Validar recepción"}</button>
               </div>
             ) : null}
           </form>
@@ -378,6 +466,14 @@ export function PurchasesView() {
                         ? ` · Doc. ${receipt.supplierDocument}`
                         : ""}
                     </p>
+                    <div className="mt-2 space-y-1 border-t border-[var(--border)] pt-2">
+                      {receipt.items.map((item) => (
+                        <p className="text-[11px]" key={item.id}>
+                          <span className="font-semibold">{item.purchaseOrderItem.nameSnapshot}</span>
+                          {` · ${item.quantity} ${item.purchaseOrderItem.unitSnapshot} · ${formatMoney(item.unitCost, selected.currency)}`}
+                        </p>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -412,9 +508,9 @@ export function PurchasesView() {
                 {orders.map((order) => (
                   <tr key={order.id}>
                     <td className="font-semibold">{order.folio}</td>
-                    <td>{order.supplier.legalName}</td>
+                     <td>{order.supplierNameSnapshot}</td>
                     <td>{formatDate(order.createdAt)}</td>
-                    <td>{order.buyer.name}</td>
+                     <td>{order.buyerNameSnapshot}</td>
                     <td>{order._count.items} · {order._count.receipts} recepciones</td>
                     <td className="font-semibold">{formatMoney(order.total, order.currency)}</td>
                     <td><StatusBadge status={order.status} /></td>

@@ -1,3 +1,14 @@
+function connectionUser(value: string | undefined) {
+  try {
+    return value ? decodeURIComponent(new URL(value).username).split(".")[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+const runtimeDbUser = connectionUser(process.env.DATABASE_URL);
+const migrationDbUser = connectionUser(process.env.DIRECT_URL);
+
 const checks: Array<{ label: string; valid: boolean; help: string }> = [
   {
     label: "APP_URL usa HTTPS",
@@ -20,6 +31,15 @@ const checks: Array<{ label: string; valid: boolean; help: string }> = [
     label: "DIRECT_URL exige SSL",
     valid: Boolean(process.env.DIRECT_URL?.includes("sslmode=require")),
     help: "La conexión de migraciones debe usar sslmode=require."
+  },
+  {
+    label: "La aplicación usa el rol privado nexo_backend",
+    valid:
+      runtimeDbUser === "nexo_backend" &&
+      Boolean(migrationDbUser) &&
+      migrationDbUser !== runtimeDbUser,
+    help:
+      "Usa nexo_backend en DATABASE_URL y reserva un usuario propietario distinto para DIRECT_URL."
   },
   {
     label: "SMTP está configurado",

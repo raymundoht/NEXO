@@ -5,7 +5,7 @@ import { ApiError, getPagination, jsonError, jsonOk, readJson } from "@/lib/api"
 import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin } from "@/lib/security";
 import { currency, nonNegativeMoney, uuid } from "@/lib/validators";
-import { decimal } from "@/lib/money";
+import { } from "@/lib/money";
 import { audit } from "@/lib/audit";
 import {
   denominationTotal,
@@ -32,8 +32,8 @@ export async function GET(request: Request) {
     const { page, pageSize, skip, take } = getPagination(request.url);
     const onlyOpen = searchParams.get("open") === "true";
     const where: Prisma.CashSessionWhereInput = {
-      ...(user.role === Role.ADMIN ? {} : { cashierId: user.id }),
-      ...(onlyOpen ? { status: "OPEN" } : {})
+      ...(onlyOpen ? { status: "OPEN" } : {}),
+      ...(user.role === Role.ADMIN ? {} : { cashierId: user.id })
     };
     const [items, total] = await db.$transaction([
       db.cashSession.findMany({
@@ -120,7 +120,7 @@ export async function POST(request: Request) {
             cashRegisterId: input.cashRegisterId,
             cashierId: user.id,
             currency: input.currency,
-            openingAmount: decimal(input.openingAmount),
+            openingAmount: Number(input.openingAmount),
             openingDenominations: input.denominations
           }
         });
@@ -129,7 +129,7 @@ export async function POST(request: Request) {
             cashSessionId: session.id,
             userId: user.id,
             type: "OPENING",
-            amount: decimal(input.openingAmount),
+            amount: Number(input.openingAmount),
             currency: input.currency,
             referenceType: "CashSession",
             referenceId: session.id,

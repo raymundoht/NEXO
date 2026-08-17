@@ -43,18 +43,19 @@ export function UsersView() {
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     try {
       await apiFetch("/api/users", {
         method: "POST",
         body: JSON.stringify({
-          name: form.get("name"),
-          email: form.get("email"),
-          role: form.get("role"),
-          password: form.get("password")
+          name: data.get("name"),
+          email: data.get("email"),
+          role: data.get("role"),
+          password: data.get("password")
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       setNewPassword("");
       setShowForm(false);
       setMessage("Usuario creado.");
@@ -118,7 +119,20 @@ export function UsersView() {
               <tbody>{items.map((user) => (
                 <tr key={user.id}>
                   <td><p className="font-semibold">{user.name}</p><p className="text-[11px] text-[var(--muted)]">{user.email}</p></td>
-                  <td><span className="badge"><ShieldCheck size={13} /> {roleLabel(user.role)}</span></td>
+                  <td>
+                    <span className="badge"><ShieldCheck size={13} /> {roleLabel(user.role)}</span>
+                    <select
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[11px]"
+                      value={user.role}
+                      onChange={(e) => update(user.id, { role: e.target.value })}
+                      aria-label={`Cambiar rol de ${user.name}`}
+                    >
+                      <option value="ADMIN">Administrador</option>
+                      <option value="WAREHOUSE">Almacenista</option>
+                      <option value="BUYER">Comprador</option>
+                      <option value="CASHIER">Cajero</option>
+                    </select>
+                  </td>
                   <td>{user.lastLoginAt ? formatDate(user.lastLoginAt) : "Nunca"}</td>
                   <td>{user.lockedUntil && new Date(user.lockedUntil) > new Date() ? <span className="text-xs font-semibold text-[var(--danger)]">Bloqueado hasta {formatDate(user.lockedUntil)}</span> : <span className="text-xs text-[var(--success)]">Sin bloqueo</span>}</td>
                   <td><StatusBadge status={user.status} /></td>

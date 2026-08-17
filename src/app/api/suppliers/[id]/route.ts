@@ -43,7 +43,42 @@ export async function GET(
       }
     });
     if (!supplier) throw new ApiError(404, "Proveedor no encontrado.");
-    return jsonOk(supplier);
+
+    // Calculate quota consumption for each supplier-product
+    const enrichedPrices = await Promise.all(
+      supplier.productPrices.map(async (sp) => {
+        let totalReceived: string | null = null;
+        let availableQty: string | null = null;
+
+        if (sp.allocatedQty != null) {
+          const received = await db.purchaseReceiptItem.aggregate({
+            where: {
+              productId: sp.productId,
+              receipt: {
+                purchaseOrder: { supplierId: id }
+              }
+            },
+            _sum: { quantity: true }
+          });
+          const receivedQty = received._sum.quantity || 0;
+          totalReceived = receivedQty.toString();
+          const available = sp.allocatedQty - receivedQty;
+          availableQty = available < 0 ? "0" : available.toString();
+        }
+
+        return {
+          ...sp,
+          allocatedQty: sp.allocatedQty?.toString() ?? null,
+          totalReceived,
+          availableQty
+        };
+      })
+    );
+
+    return jsonOk({
+      ...supplier,
+      productPrices: enrichedPrices
+    });
   } catch (error) {
     return jsonError(error);
   }

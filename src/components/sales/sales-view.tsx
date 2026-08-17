@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Ban, FileDown, RotateCcw, Ticket, X } from "lucide-react";
 import { apiFetch, formatDate, formatMoney } from "@/lib/client-api";
 import { PageHeader } from "@/components/ui/page-header";
@@ -61,6 +61,8 @@ export function SalesView() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [cashSessions, setCashSessions] = useState<OpenCashSession[]>([]);
+  const [refunding, setRefunding] = useState(false);
+  const refundRequestId = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,6 +93,7 @@ export function SalesView() {
   async function open(id: string) {
     try {
       setSelected(await apiFetch<SaleDetail>(`/api/sales/${id}`));
+      refundRequestId.current = null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible consultar.");
     }
@@ -109,10 +112,19 @@ export function SalesView() {
         quantity: Number(form.get(`quantity-${line.id}`) || 0)
       }))
       .filter((line) => line.quantity > 0);
+    refundRequestId.current ||= crypto.randomUUID();
+    setRefunding(true);
+    setError("");
     try {
-      await apiFetch(`/api/sales/${selected.id}/refund`, {
+      const endpoint =
+        selected.paymentMethod === "CARD"
+          ? "/api/stripe/refund"
+          : `/api/sales/${selected.id}/refund`;
+      await apiFetch(endpoint, {
         method: "POST",
         body: JSON.stringify({
+          clientRequestId: refundRequestId.current,
+          saleId: selected.id,
           mode,
           reason: form.get("reason"),
           cashSessionId: form.get("cashSessionId") || undefined,
@@ -126,9 +138,12 @@ export function SalesView() {
           : "Reembolso autorizado y existencias restauradas."
       );
       setSelected(null);
+      refundRequestId.current = null;
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible reembolsar.");
+    } finally {
+      setRefunding(false);
     }
   }
 
@@ -179,7 +194,7 @@ export function SalesView() {
               </tbody>
             </table>
           </div>
-        ) : <EmptyState title="Sin ventas" description="Las transacciones del POS aparecerán aquí." />}
+        ) : <EmptyState title="Sin ventas registradas" description={status ? "No hay ventas con ese filtro." : "Tus ventas de los últimos 7 días aparecerán aquí. Realiza tu primera venta en el POS."} />}
       </section>
 
       {selected ? (
@@ -207,7 +222,7 @@ export function SalesView() {
             </table>
           </div>
           <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <a className="btn btn-secondary" href={`/api/sales/${selected.id}/ticket`} target="_blank"><Ticket size={16} /> Abrir ticket</a>
+             <a className="btn btn-secondary" href={`/api/sales/${selected.id}/ticket`} target="_blank" rel="noopener"><Ticket size={16} /> Descargar ticket PDF</a>
             <div className="space-y-1 text-right text-xs text-[var(--muted)]">
               <p>Subtotal: {formatMoney(selected.subtotal, selected.currency)}</p>
               <p>Descuentos: {formatMoney(selected.discountTotal, selected.currency)}</p>
@@ -239,21 +254,21 @@ export function SalesView() {
             </div>
           ) : null}
           {canRefund && ["COMPLETED", "PARTIALLY_REFUNDED"].includes(selected.status) ? (
-            <form className="mt-5 rounded-2xl border border-[var(--danger)]/20 bg-[var(--danger-tint)] p-4" id="refund-form" onSubmit={refund}>
-              <div className="mb-3 flex items-center gap-2 font-semibold text-[var(--danger)]"><RotateCcw size={17} /> Reembolso supervisado</div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <label><span className="label">Motivo (mínimo 10 caracteres)</span><input className="field" name="reason" minLength={10} required /></label>
-                {selected.paymentMethod === "CASH" ? (
-                  <label><span className="label">Caja abierta para devolver efectivo</span><select className="field" name="cashSessionId" required><option value="">Seleccionar</option>{cashSessions.map((session) => <option key={session.id} value={session.id}>{session.cashRegister.code} · {session.cashier.name} · {session.currency}</option>)}</select></label>
-                ) : (
-                  <label><span className="label">Autorización de terminal</span><input className="field" maxLength={40} name="authorizationCode" required /></label>
-                )}
-                <div className="flex items-end gap-2">
-                  <button className="btn btn-danger flex-1" name="mode" value="REFUND"><RotateCcw size={16} /> Reembolsar selección</button>
-                  {canCancel ? <button className="btn btn-secondary flex-1" name="mode" value="CANCEL"><Ban size={16} /> Cancelar venta completa</button> : null}
+            <div className="mt-5 rounded-2xl border border-[var(--danger)]/20 bg-[var(--danger-tint)] p-4">
+              <form id="refund-form" onSubmit={refund}>
+                <div className="mb-3 flex items-center gap-2 font-semibold text-[var(--danger)]"><RotateCcw size={17} /> Reembolso supervisado</div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label><span className="label">Motivo (mínimo 10 caracteres)</span><input className="field" name="reason" minLength={10} required /></label>
+                  {selected.paymentMethod === "CASH" ? (
+                    <label><span className="label">Caja abierta para devolver efectivo</span><select className="field" name="cashSessionId" required><option value="">Seleccionar</option>{cashSessions.map((session) => <option key={session.id} value={session.id}>{session.cashRegister.code} · {session.cashier.name} · {session.currency}</option>)}</select></label>
+                  ) : <p className="self-end text-xs text-[var(--muted)]">La devolución se enviará al pago original mediante Stripe.</p>}
+                  <div className="flex items-end gap-2">
+                    <button className="btn btn-danger flex-1" disabled={refunding} name="mode" value="REFUND"><RotateCcw size={16} /> Reembolsar selección</button>
+                    {canCancel ? <button className="btn btn-secondary flex-1" disabled={refunding} name="mode" value="CANCEL"><Ban size={16} /> Cancelar completa</button> : null}
+                  </div>
                 </div>
-              </div>
-            </form>
+              </form>
+            </div>
           ) : null}
         </section>
       ) : null}

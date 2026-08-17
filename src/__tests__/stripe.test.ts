@@ -15,6 +15,11 @@ vi.mock('@/lib/stripe', () => ({
   stripe: {
     webhooks: {
       constructEvent: vi.fn()
+    },
+    checkout: {
+      sessions: {
+        retrieve: vi.fn()
+      }
     }
   }
 }));
@@ -22,9 +27,13 @@ vi.mock('@/lib/stripe', () => ({
 vi.mock('@/lib/db', () => ({
   db: {
     paymentWebhookEvent: {
-      create: vi.fn(),
+      upsert: vi.fn(),
       update: vi.fn(),
       findUnique: vi.fn()
+    },
+    paymentAttempt: {
+      findUnique: vi.fn(),
+      update: vi.fn()
     },
     $transaction: vi.fn((cb) => cb({
       paymentAttempt: {
@@ -68,21 +77,36 @@ describe('Stripe Webhook', () => {
     };
 
     (stripe.webhooks.constructEvent as any).mockReturnValue(fakeEvent);
-    (db.paymentWebhookEvent.create as any).mockResolvedValue({ id: 'evt_123' });
+    (stripe.checkout.sessions.retrieve as any).mockResolvedValue({
+      id: 'cs_123',
+      mode: 'payment',
+      payment_status: 'paid',
+      currency: 'mxn',
+      livemode: false,
+      amount_total: 1000,
+      metadata: { paymentAttemptId: 'attempt_1' },
+      payment_intent: 'pi_123'
+    });
+    (db.paymentWebhookEvent.upsert as any).mockResolvedValue({ id: 'evt_123' });
+    (db.paymentAttempt.findUnique as any).mockResolvedValue({ id: 'attempt_1', checkoutSessionId: 'cs_123' });
     (fulfillSaleOnce as any).mockResolvedValue(true);
 
     const req = createMockRequest();
     const res = await POST(req);
 
     expect(stripe.webhooks.constructEvent).toHaveBeenCalled();
-    expect(db.paymentWebhookEvent.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+    expect(db.paymentWebhookEvent.upsert).toHaveBeenCalledWith({
+      where: { stripeEventId: 'evt_123' },
+      create: expect.objectContaining({
         stripeEventId: 'evt_123',
         eventType: 'checkout.session.completed'
+      }),
+      update: expect.objectContaining({
+        processingStatus: 'PROCESSING'
       })
     });
     
-    expect(fulfillSaleOnce).toHaveBeenCalledWith('attempt_1', 'cs_123', 'pi_123');
+    expect(fulfillSaleOnce).toHaveBeenCalledWith('cs_123', 'pi_123', null, 1000);
     expect(res.status).toBe(200);
   });
 
@@ -102,17 +126,20 @@ describe('Stripe Webhook', () => {
       code: 'P2002',
       clientVersion: '6.x'
     });
-    (db.paymentWebhookEvent.create as any).mockRejectedValue(err);
+    (db.paymentWebhookEvent.upsert as any).mockRejectedValue(err);
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const req = createMockRequest();
     const res = await POST(req);
 
-    expect(db.paymentWebhookEvent.create).toHaveBeenCalled();
+    expect(db.paymentWebhookEvent.upsert).toHaveBeenCalled();
     // It should NOT call fulfillSaleOnce because it was intercepted as duplicate
     expect(fulfillSaleOnce).not.toHaveBeenCalled();
     
-    // Should return 200 to acknowledge Stripe and avoid retries for duplicate event
-    expect(res.status).toBe(200);
+    // This request did not process the event; Stripe must retry in case the
+    // concurrent claimant terminates before completing it.
+    expect(res.status).toBe(500);
+    consoleSpy.mockRestore();
   });
   
   it('falla ante una firma inválida', async () => {
@@ -124,6 +151,6 @@ describe('Stripe Webhook', () => {
     const res = await POST(req);
     
     expect(res.status).toBe(400);
-    expect(db.paymentWebhookEvent.create).not.toHaveBeenCalled();
+    expect(db.paymentWebhookEvent.upsert).not.toHaveBeenCalled();
   });
 });

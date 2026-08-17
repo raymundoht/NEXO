@@ -33,6 +33,7 @@ type Product = {
   allowNegative: boolean;
   status: string;
   stockAlert?: "LOW" | "HIGH" | null;
+  updatedAt: string;
   category?: { id: string; name: string } | null;
 };
 
@@ -44,6 +45,8 @@ export function InventoryView() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [defaultTaxRate, setDefaultTaxRate] = useState("16");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,12 +58,13 @@ export function InventoryView() {
     setLoading(true);
     try {
       const [result, categoryResult] = await Promise.all([
-        apiFetch<{ items: Product[] }>(
-          `/api/products?pageSize=100&q=${encodeURIComponent(search)}`
+        apiFetch<{ items: Product[]; defaults?: { taxRate: string } }>(
+          `/api/products?pageSize=500&status=${statusFilter}&q=${encodeURIComponent(search)}`
         ),
         apiFetch<Category[]>("/api/categories")
       ]);
       setProducts(result.items);
+      if (result.defaults?.taxRate) setDefaultTaxRate(result.defaults.taxRate);
       setCategories(categoryResult);
       setError("");
     } catch (err) {
@@ -68,7 +72,7 @@ export function InventoryView() {
     } finally {
       setLoading(false);
     }
-  }, [search]);
+  }, [search, statusFilter]);
 
   useEffect(() => {
     const timer = setTimeout(load, 220);
@@ -77,27 +81,28 @@ export function InventoryView() {
 
   async function createProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setSaving(true);
     setError("");
-    const form = new FormData(event.currentTarget);
+    const data = new FormData(form);
     try {
       await apiFetch("/api/products", {
         method: "POST",
         body: JSON.stringify({
-          sku: form.get("sku"),
-          barcode: form.get("barcode") || null,
-          name: form.get("name"),
-          categoryId: form.get("categoryId") || null,
-          unit: form.get("unit"),
-          cost: form.get("cost"),
-          salePrice: form.get("salePrice"),
-          taxRate: form.get("taxRate"),
-          minStock: form.get("minStock"),
-          maxStock: form.get("maxStock") || null,
+          sku: data.get("sku"),
+          barcode: data.get("barcode") || null,
+          name: data.get("name"),
+          categoryId: data.get("categoryId") || null,
+          unit: data.get("unit"),
+          cost: data.get("cost"),
+          salePrice: data.get("salePrice"),
+          taxRate: data.get("taxRate"),
+          minStock: data.get("minStock"),
+          maxStock: data.get("maxStock") || null,
           allowNegative: false
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       setSuccess("Producto creado correctamente.");
       setShowForm(false);
       await load();
@@ -111,26 +116,28 @@ export function InventoryView() {
   async function updateProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing) return;
+    const form = event.currentTarget;
     setSaving(true);
     setError("");
-    const form = new FormData(event.currentTarget);
+    const data = new FormData(form);
     try {
       await apiFetch(`/api/products/${editing.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          sku: form.get("sku"),
-          barcode: form.get("barcode") || null,
-          name: form.get("name"),
-          description: form.get("description") || null,
-          categoryId: form.get("categoryId") || null,
-          unit: form.get("unit"),
-          cost: form.get("cost"),
-          salePrice: form.get("salePrice"),
-          taxRate: form.get("taxRate"),
-          minStock: form.get("minStock"),
-          maxStock: form.get("maxStock") || null,
-          status: form.get("status"),
-          allowNegative: form.get("allowNegative") === "on"
+          sku: data.get("sku"),
+          barcode: data.get("barcode") || null,
+          name: data.get("name"),
+          description: data.get("description") || null,
+          categoryId: data.get("categoryId") || null,
+          unit: data.get("unit"),
+          cost: data.get("cost"),
+          salePrice: data.get("salePrice"),
+          taxRate: data.get("taxRate"),
+          minStock: data.get("minStock"),
+          maxStock: data.get("maxStock") || null,
+          status: data.get("status"),
+          allowNegative: data.get("allowNegative") === "on",
+          updatedAt: editing.updatedAt
         })
       });
       setEditing(null);
@@ -176,9 +183,9 @@ export function InventoryView() {
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Field label="SKU" name="sku" required />
-            <Field label="Código de barras" name="barcode" />
-            <Field label="Nombre" name="name" required className="xl:col-span-2" />
+            <Field label="SKU" name="sku" required hint="Código único del producto. Ej: PROD-001" maxLength={80} />
+            <Field label="Código de barras" name="barcode" hint="EAN-13 (13 dígitos) o EAN-8 (8 dígitos). Solo números." maxLength={80} pattern="[0-9]*" inputMode="numeric" />
+            <Field label="Nombre del producto" name="name" required className="xl:col-span-2" hint="Nombre descriptivo que identifique el producto." maxLength={200} />
             <label>
               <span className="label">Categoría</span>
               <select className="field" name="categoryId">
@@ -189,22 +196,24 @@ export function InventoryView() {
                   </option>
                 ))}
               </select>
+              <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">Agrupa productos para reportes y búsqueda.</span>
             </label>
             <label>
               <span className="label">Unidad</span>
               <select className="field" defaultValue="PZA" name="unit">
-                <option>PZA</option>
-                <option>KG</option>
-                <option>LT</option>
-                <option>CJA</option>
-                <option>SER</option>
+                <option value="PZA">Pieza (PZA)</option>
+                <option value="KG">Kilogramo (KG)</option>
+                <option value="LT">Litro (LT)</option>
+                <option value="CJA">Caja (CJA)</option>
+                <option value="SER">Servicio (SER)</option>
               </select>
+              <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">Unidad de medida para ventas y reportes.</span>
             </label>
-            <Field label="Costo" name="cost" type="number" step="0.01" required />
-            <Field label="Precio de venta" name="salePrice" type="number" step="0.01" required />
-            <Field label="Impuesto %" name="taxRate" type="number" step="0.01" defaultValue="16" required />
-            <Field label="Stock mínimo" name="minStock" type="number" step="0.001" defaultValue="0" required />
-            <Field label="Stock máximo" name="maxStock" type="number" step="0.001" />
+            <Field label="Costo de compra" name="cost" type="number" step="0.0001" min="0" max="1000000000" required hint="Precio al que compras al proveedor." />
+            <Field label="Precio de venta" name="salePrice" type="number" step="0.0001" min="0" max="1000000000" required hint="Precio al que vendes al cliente." />
+            <Field key={defaultTaxRate} label="Impuesto %" name="taxRate" type="number" step="0.01" min="0" max="100" defaultValue={defaultTaxRate} required hint="Porcentaje predeterminado configurado para el negocio." />
+            <Field label="Stock mínimo" name="minStock" type="number" step="0.001" min="0" max="1000000" defaultValue="0" required hint="Se alerta cuando la existencia baja de este nivel." />
+            <Field label="Stock máximo" name="maxStock" type="number" step="0.001" min="0" max="1000000" hint="Opcional. Se alerta si se supera este nivel." />
           </div>
           <div className="mt-5 flex justify-end">
             <button className="btn btn-primary" disabled={saving}>
@@ -238,10 +247,10 @@ export function InventoryView() {
             </button>
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Field defaultValue={editing.sku} label="SKU" name="sku" required />
-            <Field defaultValue={editing.barcode || ""} label="Código de barras" name="barcode" />
-            <Field defaultValue={editing.name} label="Nombre" name="name" required className="xl:col-span-2" />
-            <Field defaultValue={editing.description || ""} label="Descripción" name="description" className="xl:col-span-2" />
+            <Field defaultValue={editing.sku} label="SKU" name="sku" required hint="Código único del producto." maxLength={80} />
+            <Field defaultValue={editing.barcode || ""} label="Código de barras" name="barcode" hint="Solo números. EAN-13 (13) o EAN-8 (8) dígitos." maxLength={80} pattern="[0-9]*" inputMode="numeric" />
+            <Field defaultValue={editing.name} label="Nombre del producto" name="name" required className="xl:col-span-2" hint="Nombre descriptivo del producto." maxLength={200} />
+            <Field defaultValue={editing.description || ""} label="Descripción" name="description" className="xl:col-span-2" hint="Detalles adicionales (opcional)." maxLength={2000} />
             <label>
               <span className="label">Categoría</span>
               <select className="field" defaultValue={editing.category?.id || ""} name="categoryId">
@@ -250,18 +259,20 @@ export function InventoryView() {
                   <option key={category.id} value={category.id}>{category.name}</option>
                 ))}
               </select>
+              <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">Agrupa productos para reportes.</span>
             </label>
             <label>
               <span className="label">Unidad</span>
               <select className="field" defaultValue={editing.unit} name="unit">
-                <option>PZA</option><option>KG</option><option>LT</option><option>CJA</option><option>SER</option>
+                <option value="PZA">Pieza (PZA)</option><option value="KG">Kilogramo (KG)</option><option value="LT">Litro (LT)</option><option value="CJA">Caja (CJA)</option><option value="SER">Servicio (SER)</option>
               </select>
+              <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">Unidad de medida.</span>
             </label>
-            <Field defaultValue={editing.cost} label="Costo" name="cost" type="number" step="0.01" required />
-            <Field defaultValue={editing.salePrice} label="Precio de venta" name="salePrice" type="number" step="0.01" required />
-            <Field defaultValue={editing.taxRate} label="Impuesto %" name="taxRate" type="number" step="0.01" required />
-            <Field defaultValue={editing.minStock} label="Stock mínimo" name="minStock" type="number" step="0.001" required />
-            <Field defaultValue={editing.maxStock || ""} label="Stock máximo" name="maxStock" type="number" step="0.001" />
+            <Field defaultValue={editing.cost} label="Costo de compra" name="cost" type="number" step="0.0001" min="0" max="1000000000" required hint="Precio al proveedor." />
+            <Field defaultValue={editing.salePrice} label="Precio de venta" name="salePrice" type="number" step="0.0001" min="0" max="1000000000" required hint="Precio al cliente." />
+            <Field defaultValue={editing.taxRate} label="Impuesto %" name="taxRate" type="number" step="0.01" min="0" max="100" required hint="Porcentaje de IVA." />
+            <Field defaultValue={editing.minStock} label="Stock mínimo" name="minStock" type="number" step="0.001" min="0" max="1000000" required hint="Nivel mínimo antes de alertar." />
+            <Field defaultValue={editing.maxStock || ""} label="Stock máximo" name="maxStock" type="number" step="0.001" min="0" max="1000000" hint="Nivel máximo para alertar." />
             <label>
               <span className="label">Estado</span>
               <select className="field" defaultValue={editing.status} name="status">
@@ -298,7 +309,17 @@ export function InventoryView() {
           </div>
           <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
             <SlidersHorizontal size={15} />
-            {products.length} productos visibles
+            <select
+              aria-label="Filtrar productos por estado"
+              className="field !h-9 !w-auto"
+              onChange={(event) => setStatusFilter(event.target.value)}
+              value={statusFilter}
+            >
+              <option value="ALL">Todos</option>
+              <option value="ACTIVE">Activos</option>
+              <option value="INACTIVE">Inactivos</option>
+            </select>
+            {products.length} visibles
           </div>
         </div>
         {loading ? (
@@ -394,17 +415,22 @@ export function InventoryView() {
 function Field({
   label,
   name,
+  hint,
   className,
   ...props
 }: {
   label: string;
   name: string;
+  hint?: string;
   className?: string;
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className={className}>
       <span className="label">{label}</span>
       <input className="field" name={name} {...props} />
+      {hint && (
+        <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">{hint}</span>
+      )}
     </label>
   );
 }

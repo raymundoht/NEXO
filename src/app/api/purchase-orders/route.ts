@@ -14,11 +14,14 @@ import {
 import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
 import { currency, positiveQuantity, uuid } from "@/lib/validators";
-import { decimal, roundMoney } from "@/lib/money";
+import { roundCost, roundMoney } from "@/lib/money";
 import { nextFolio } from "@/lib/sequence";
 import { audit } from "@/lib/audit";
+import { parseBusinessDate } from "@/lib/export";
+import { sendSupplierRestockRequestEmail } from "@/lib/mailer";
 
 const createSchema = z.object({
+  clientRequestId: uuid,
   supplierId: uuid,
   currency: currency.default("MXN"),
   exchangeRate: z.coerce.number().positive().max(1_000_000).default(1),
@@ -47,16 +50,27 @@ export async function GET(request: Request) {
     const status = searchParams.get("status") as PurchaseOrderStatus | null;
     const from = searchParams.get("from");
     const to = searchParams.get("to");
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
+    try {
+      fromDate = from ? parseBusinessDate(from) : undefined;
+      toDate = to ? parseBusinessDate(to, true) : undefined;
+    } catch {
+      throw new ApiError(400, "El rango de fechas es inválido.");
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      throw new ApiError(400, "La fecha inicial no puede ser posterior a la final.");
+    }
     const where: Prisma.PurchaseOrderWhereInput = {
       ...(supplierId ? { supplierId } : {}),
       ...(status && Object.values(PurchaseOrderStatus).includes(status)
         ? { status }
         : {}),
-      ...(from || to
+      ...(fromDate || toDate
         ? {
             createdAt: {
-              ...(from ? { gte: new Date(from) } : {}),
-              ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {})
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {})
             }
           }
         : {})
@@ -93,14 +107,30 @@ export async function POST(request: Request) {
       throw new ApiError(400, "No repitas productos en la misma orden.");
     }
 
-    const order = await db.$transaction(
+    const result = await db.$transaction(
       async (tx) => {
-        const [supplier, products] = await Promise.all([
+        const existing = await tx.purchaseOrder.findUnique({
+          where: { clientRequestId: input.clientRequestId },
+          include: { items: true, supplier: true }
+        });
+        if (existing) {
+          if (existing.buyerId !== user.id) {
+            throw new ApiError(409, "El identificador de solicitud ya fue utilizado.");
+          }
+          return { order: existing, created: false };
+        }
+
+        const [supplier, products, settings] = await Promise.all([
           tx.supplier.findFirst({
             where: { id: input.supplierId, active: true }
           }),
           tx.product.findMany({
             where: { id: { in: productIds }, status: "ACTIVE" }
+          }),
+          tx.businessSettings.upsert({
+            where: { id: 1 },
+            create: { id: 1 },
+            update: {}
           })
         ]);
         if (!supplier) {
@@ -109,16 +139,28 @@ export async function POST(request: Request) {
         if (products.length !== productIds.length) {
           throw new ApiError(400, "Uno o más productos no están disponibles.");
         }
+        if (!settings.allowedCurrencies.includes(input.currency)) {
+          throw new ApiError(400, "La moneda no está habilitada.");
+        }
+        if (
+          input.currency === settings.baseCurrency &&
+          Number(input.exchangeRate) !== 1
+        ) {
+          throw new ApiError(400, "El tipo de cambio de la moneda base debe ser 1.");
+        }
         const productMap = new Map(products.map((product) => [product.id, product]));
         const lines = input.items.map((item) => {
           const product = productMap.get(item.productId)!;
-          const quantity = decimal(item.quantity);
-          const unitCost = decimal(item.unitCost);
-          const taxRate = decimal(item.taxRate ?? product.taxRate);
-          const lineSubtotal = roundMoney(quantity.mul(unitCost));
+          const quantity = Number(item.quantity);
+          const unitCost = roundCost(new Prisma.Decimal(item.unitCost));
+          const taxRate = Number(item.taxRate ?? product.taxRate);
+          const lineSubtotal = roundMoney(unitCost.mul(quantity));
           const lineTax = roundMoney(lineSubtotal.mul(taxRate).div(100));
           return {
             productId: item.productId,
+            skuSnapshot: product.sku,
+            nameSnapshot: product.name,
+            unitSnapshot: product.unit,
             quantityOrdered: quantity,
             unitCost,
             taxRate,
@@ -127,25 +169,33 @@ export async function POST(request: Request) {
             lineTotal: roundMoney(lineSubtotal.plus(lineTax))
           };
         });
-        const totals = lines.reduce(
+        const totals = lines.reduce<{
+          subtotal: Prisma.Decimal;
+          tax: Prisma.Decimal;
+          total: Prisma.Decimal;
+        }>(
           (acc, line) => ({
-            subtotal: roundMoney(acc.subtotal.plus(line.lineSubtotal)),
-            tax: roundMoney(acc.tax.plus(line.lineTax)),
-            total: roundMoney(acc.total.plus(line.lineTotal))
+            subtotal: acc.subtotal.plus(line.lineSubtotal),
+            tax: acc.tax.plus(line.lineTax),
+            total: acc.total.plus(line.lineTotal)
           }),
-          { subtotal: decimal(0), tax: decimal(0), total: decimal(0) }
+          { subtotal: new Prisma.Decimal(0), tax: new Prisma.Decimal(0), total: new Prisma.Decimal(0) }
         );
         const folio = await nextFolio(tx, "PURCHASE_ORDER", "OC");
-        return tx.purchaseOrder.create({
+        const order = await tx.purchaseOrder.create({
           data: {
+            clientRequestId: input.clientRequestId,
             folio,
             supplierId: input.supplierId,
             buyerId: user.id,
+            supplierCodeSnapshot: supplier.code,
+            supplierNameSnapshot: supplier.legalName,
+            buyerNameSnapshot: user.name,
             status: input.sendNow
               ? PurchaseOrderStatus.SENT
               : PurchaseOrderStatus.DRAFT,
             currency: input.currency,
-            exchangeRate: decimal(input.exchangeRate),
+            exchangeRate: Number(input.exchangeRate),
             subtotal: totals.subtotal,
             taxTotal: totals.tax,
             total: totals.total,
@@ -156,20 +206,92 @@ export async function POST(request: Request) {
           },
           include: { items: true, supplier: true }
         });
+        return { order, created: true };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
+    const order = result.order;
 
-    const metadata = await requestMetadata();
-    await audit({
-      userId: user.id,
-      action: "PURCHASE_ORDER_CREATED",
-      entityType: "PurchaseOrder",
-      entityId: order.id,
-      ip: metadata.ip,
-      metadata: { folio: order.folio, status: order.status }
-    });
-    return jsonOk(order, 201);
+    if (result.created) {
+      const metadata = await requestMetadata();
+      await audit({
+        userId: user.id,
+        action: "PURCHASE_ORDER_CREATED",
+        entityType: "PurchaseOrder",
+        entityId: order.id,
+        ip: metadata.ip,
+        metadata: { folio: order.folio, status: order.status }
+      });
+
+      // Check supplier allocation quotas and send restock email if exceeded
+      const quotaWarnings: Array<{
+        productName: string;
+        sku: string;
+        currentAllocation: number;
+        totalReceived: number;
+        additionalNeeded: number;
+      }> = [];
+
+      for (const item of order.items) {
+        const supplierProduct = await db.supplierProduct.findUnique({
+          where: {
+            supplierId_productId: {
+              supplierId: order.supplierId,
+              productId: item.productId
+            }
+          }
+        });
+        if (supplierProduct?.allocatedQty != null) {
+          const received = await db.purchaseReceiptItem.aggregate({
+            where: {
+              productId: item.productId,
+              receipt: {
+                purchaseOrder: { supplierId: order.supplierId }
+              }
+            },
+            _sum: { quantity: true }
+          });
+          const totalReceived = Number(received._sum.quantity || 0);
+          const wouldBeTotal = totalReceived + Number(item.quantityOrdered);
+          const allocation = Number(supplierProduct.allocatedQty);
+          if (wouldBeTotal > allocation) {
+            quotaWarnings.push({
+              productName: item.nameSnapshot,
+              sku: item.skuSnapshot,
+              currentAllocation: allocation,
+              totalReceived,
+              additionalNeeded: Math.ceil(wouldBeTotal - allocation)
+            });
+          }
+        }
+      }
+
+      if (quotaWarnings.length > 0 && order.supplier.email) {
+        const settings = await db.businessSettings.upsert({
+          where: { id: 1 },
+          create: { id: 1 },
+          update: {}
+        });
+        // Fire-and-forget: don't block the response
+        void sendSupplierRestockRequestEmail({
+          to: order.supplier.email,
+          supplierName: order.supplier.tradeName || order.supplier.legalName,
+          businessName: settings.businessName,
+          items: quotaWarnings
+        }).catch((err) => {
+          console.error("[RESTOCK EMAIL] Error al enviar:", err);
+        });
+      }
+
+      return jsonOk(
+        {
+          ...order,
+          quotaWarnings: quotaWarnings.length > 0 ? quotaWarnings : undefined
+        },
+        201
+      );
+    }
+    return jsonOk(order, 200);
   } catch (error) {
     return jsonError(error);
   }

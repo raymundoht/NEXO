@@ -15,6 +15,7 @@ import {
   Menu,
   Moon,
   PackageSearch,
+  Package,
   PanelLeftClose,
   Palette,
   ReceiptText,
@@ -56,6 +57,7 @@ const navigationGroups = [
     title: "Logística",
     items: [
       { href: "/inventory", label: "Inventario", icon: PackageSearch, permission: "inventory.read" },
+      { href: "/inventory-warehouse", label: "Gestión de almacenes", icon: Package, permission: "inventory.read" },
       { href: "/inventory-movements", label: "Kardex y ajustes", icon: ArrowLeftRight, permission: "inventory.read" },
       { href: "/inventory-counts", label: "Conteos físicos", icon: ClipboardCheck, permission: "inventory.audit" },
       { href: "/purchases", label: "Compras", icon: ReceiptText, permission: "purchases.read" },

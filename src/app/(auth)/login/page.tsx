@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import dynamic from "next/dynamic";
-import { selfRegistrationEnabled } from "@/lib/registration";
+// Registration disabled for closed system
 
 const LoginForm = dynamic(
   () => import("@/components/auth/login-form").then((m) => ({ default: m.LoginForm })),
@@ -19,7 +19,7 @@ export default async function LoginPage({
     <LoginForm
       initialEmail={params.email?.slice(0, 320) || ""}
       registered={params.registered === "1"}
-      registrationEnabled={selfRegistrationEnabled()}
+      registrationEnabled={false}
     />
   );
 }

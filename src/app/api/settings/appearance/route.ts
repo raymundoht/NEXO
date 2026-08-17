@@ -11,9 +11,24 @@ const ACCENT_PRESETS = [
   "#d97706", "#16a34a", "#0d9488", "#0891b2"
 ];
 
+const accentColor = z
+  .string()
+  .regex(/^#[0-9a-fA-F]{6}$/)
+  .refine((value) => {
+    const channels = [1, 3, 5].map((index) => {
+      const channel = parseInt(value.slice(index, index + 2), 16) / 255;
+      return channel <= 0.03928
+        ? channel / 12.92
+        : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    const luminance =
+      0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    return 1.05 / (luminance + 0.05) >= 3;
+  }, "El color debe tener contraste suficiente con texto blanco.");
+
 const appearanceSchema = z.object({
-  accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-  accentColorDark: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  accentColor: accentColor.optional(),
+  accentColorDark: accentColor.optional(),
   sidebarStyle: z.enum(["dark", "light", "brand"]).optional(),
   borderRadius: z.enum(["none", "sm", "md", "lg", "xl"]).optional(),
   fontSize: z.enum(["xs", "sm", "md", "lg"]).optional(),

@@ -1,7 +1,11 @@
 import { getCurrentUser } from "@/lib/auth";
-import { jsonOk } from "@/lib/api";
+import { jsonOk, jsonError } from "@/lib/api";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  return jsonOk({ user });
+  try {
+    const user = await getCurrentUser();
+    return jsonOk({ user });
+  } catch (error) {
+    return jsonError(error);
+  }
 }

@@ -1,7 +1,9 @@
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { db } from "@/lib/db";
-import { getPagination, jsonError, jsonOk } from "@/lib/api";
+import { ApiError, getPagination, jsonError, jsonOk } from "@/lib/api";
 import { requirePermission } from "@/lib/auth";
+import { parseBusinessDate } from "@/lib/export";
 
 export async function GET(request: Request) {
   try {
@@ -12,14 +14,25 @@ export async function GET(request: Request) {
     const userId = searchParams.get("userId");
     const from = searchParams.get("from");
     const to = searchParams.get("to");
+    if (userId && !z.string().uuid().safeParse(userId).success) {
+      throw new ApiError(400, "El usuario seleccionado es inválido.");
+    }
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
+    try {
+      fromDate = from ? parseBusinessDate(from) : undefined;
+      toDate = to ? parseBusinessDate(to, true) : undefined;
+    } catch {
+      throw new ApiError(400, "El rango de fechas es inválido.");
+    }
     const where: Prisma.AuditLogWhereInput = {
       ...(action ? { action: { contains: action, mode: "insensitive" } } : {}),
       ...(userId ? { userId } : {}),
-      ...(from || to
+      ...(fromDate || toDate
         ? {
             createdAt: {
-              ...(from ? { gte: new Date(from) } : {}),
-              ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {})
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {})
             }
           }
         : {})
@@ -28,7 +41,7 @@ export async function GET(request: Request) {
       db.auditLog.findMany({
         where,
         include: { user: { select: { id: true, name: true, email: true } } },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip,
         take
       }),

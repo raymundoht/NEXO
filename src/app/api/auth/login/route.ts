@@ -95,22 +95,42 @@ export async function POST(request: Request) {
 
     if (!allowed) {
       await db.$transaction(async (tx) => {
+        if (ipHash) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ipHash}))`;
+          const failures = await tx.authAttempt.count({
+            where: {
+              ipHash,
+              success: false,
+              createdAt: { gte: windowStart }
+            }
+          });
+          if (failures >= 25) {
+            throw new ApiError(
+              429,
+              "Demasiados intentos. Espera 15 minutos.",
+              "RATE_LIMITED"
+            );
+          }
+        }
         await tx.authAttempt.create({
           data: { normalizedEmail: email, ipHash, success: false }
         });
 
         if (user) {
+          await tx.$executeRaw`SELECT id FROM users WHERE id = ${user.id}::uuid FOR UPDATE`;
+          const currentUser = await tx.user.findUnique({ where: { id: user.id } });
+          if (!currentUser) return;
           const stillInWindow =
-            user.firstFailedAt && user.firstFailedAt >= windowStart;
+            currentUser.firstFailedAt && currentUser.firstFailedAt >= windowStart;
           const failedAttempts = stillInWindow
-            ? user.failedLoginAttempts + 1
+            ? currentUser.failedLoginAttempts + 1
             : 1;
 
           await tx.user.update({
             where: { id: user.id },
             data: {
               failedLoginAttempts: failedAttempts,
-              firstFailedAt: stillInWindow ? user.firstFailedAt : now,
+              firstFailedAt: stillInWindow ? currentUser.firstFailedAt : now,
               lockedUntil:
                 failedAttempts >= 5
                   ? new Date(now.getTime() + 15 * 60 * 1000)
@@ -135,6 +155,14 @@ export async function POST(request: Request) {
     }
 
     await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM users WHERE id = ${user.id}::uuid FOR UPDATE`;
+      const currentUser = await tx.user.findUnique({ where: { id: user.id } });
+      if (!currentUser || currentUser.status !== UserStatus.ACTIVE) {
+        throw new ApiError(401, "Correo o contraseña incorrectos.", "INVALID_CREDENTIALS");
+      }
+      if (currentUser.lockedUntil && currentUser.lockedUntil > now) {
+        throw new ApiError(423, "La cuenta está bloqueada temporalmente. Intenta más tarde.");
+      }
       await tx.user.update({
         where: { id: user.id },
         data: {

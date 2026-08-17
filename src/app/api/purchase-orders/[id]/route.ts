@@ -2,8 +2,9 @@ import { PurchaseOrderStatus } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
-import { requirePermission } from "@/lib/auth";
+import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin } from "@/lib/security";
+import { audit } from "@/lib/audit";
 
 export async function GET(
   _request: Request,
@@ -21,7 +22,17 @@ export async function GET(
         receipts: {
           include: {
             receivedBy: { select: { id: true, name: true } },
-            items: true
+            items: {
+              include: {
+                purchaseOrderItem: {
+                  select: {
+                    skuSnapshot: true,
+                    nameSnapshot: true,
+                    unitSnapshot: true
+                  }
+                }
+              }
+            }
           },
           orderBy: { receivedAt: "desc" }
         }
@@ -40,7 +51,7 @@ export async function PATCH(
 ) {
   try {
     assertTrustedOrigin(request);
-    await requirePermission("purchases.write");
+    const user = await requirePermission("purchases.write");
     const { id } = await context.params;
     const input = z
       .object({
@@ -71,9 +82,28 @@ export async function PATCH(
     ) {
       throw new ApiError(409, "La orden ya tiene recepciones y no puede cancelarse.");
     }
-    const updated = await db.purchaseOrder.update({
-      where: { id },
+    const changed = await db.purchaseOrder.updateMany({
+      where: {
+        id,
+        status:
+          input.action === "SEND"
+            ? PurchaseOrderStatus.DRAFT
+            : { in: [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.SENT] }
+      },
       data: { status, sentAt: input.action === "SEND" ? new Date() : undefined }
+    });
+    if (changed.count !== 1) {
+      throw new ApiError(409, "La orden cambió de estado. Actualiza el detalle.");
+    }
+    const updated = await db.purchaseOrder.findUniqueOrThrow({ where: { id } });
+    const metadata = await requestMetadata();
+    await audit({
+      userId: user.id,
+      action: input.action === "SEND" ? "PURCHASE_ORDER_SENT" : "PURCHASE_ORDER_CANCELLED",
+      entityType: "PurchaseOrder",
+      entityId: id,
+      ip: metadata.ip,
+      metadata: { previousStatus: order.status, status: updated.status }
     });
     return jsonOk(updated);
   } catch (error) {

@@ -27,9 +27,16 @@ export async function GET(request: Request) {
     await requirePermission("purchases.read");
     const { searchParams } = new URL(request.url);
     const q = searchParams.get("q")?.trim().slice(0, 100);
+    const activeParam = searchParams.get("active");
     const { page, pageSize, skip, take } = getPagination(request.url);
-    const where: Prisma.SupplierWhereInput = q
-      ? {
+    const where: Prisma.SupplierWhereInput = {
+      ...(activeParam === "true"
+        ? { active: true }
+        : activeParam === "false"
+          ? { active: false }
+          : {}),
+      ...(q
+        ? {
           OR: [
             { legalName: { contains: q, mode: "insensitive" } },
             { tradeName: { contains: q, mode: "insensitive" } },
@@ -37,7 +44,8 @@ export async function GET(request: Request) {
             { taxId: { contains: q, mode: "insensitive" } }
           ]
         }
-      : {};
+        : {})
+    };
     const [items, total] = await db.$transaction([
       db.supplier.findMany({ where, orderBy: { legalName: "asc" }, skip, take }),
       db.supplier.count({ where })

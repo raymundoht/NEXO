@@ -16,7 +16,9 @@ afterEach(() => {
 });
 
 describe("registro verificado", () => {
-  it("respeta el interruptor de registro", () => {
+  it("respeta el interruptor de registro y por defecto es falso para empresa cerrada", () => {
+    delete process.env.SELF_REGISTRATION_ENABLED;
+    expect(selfRegistrationEnabled()).toBe(false);
     process.env.SELF_REGISTRATION_ENABLED = "false";
     expect(selfRegistrationEnabled()).toBe(false);
     process.env.SELF_REGISTRATION_ENABLED = "true";

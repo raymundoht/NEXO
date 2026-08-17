@@ -24,8 +24,11 @@ export async function PATCH(
     const actor = await requirePermission("users.manage");
     const { id } = await context.params;
     const input = schema.parse(await readJson(request));
-    if (actor.id === id && input.status === UserStatus.SUSPENDED) {
-      throw new ApiError(400, "No puedes suspender tu propia cuenta.");
+    if (actor.id === id && input.status && input.status !== UserStatus.ACTIVE) {
+      throw new ApiError(400, "No puedes desactivar tu propia cuenta.");
+    }
+    if (actor.id === id && input.role && input.role !== "ADMIN") {
+      throw new ApiError(400, "No puedes cambiar tu propio rol.");
     }
     const passwordHash = input.password
       ? await hashPassword(input.password)
@@ -93,6 +96,7 @@ export async function PATCH(
         };
 
         const shouldRevokeSessions =
+          input.role !== undefined ||
           input.password ||
           input.status === UserStatus.SUSPENDED ||
           input.status === UserStatus.DISABLED ||
@@ -103,6 +107,12 @@ export async function PATCH(
           await tx.session.updateMany({
             where: { userId: id, revokedAt: null },
             data: { revokedAt: new Date() }
+          });
+        }
+        if (input.password) {
+          await tx.passwordResetToken.updateMany({
+            where: { userId: id, usedAt: null },
+            data: { usedAt: new Date() }
           });
         }
         return updated;

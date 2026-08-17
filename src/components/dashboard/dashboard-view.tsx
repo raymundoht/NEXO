@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Notice } from "@/components/ui/notice";
 
 type DashboardData = {
+  currency: string;
   visibility: {
     sales: boolean;
     inventory: boolean;
@@ -83,7 +84,7 @@ export function DashboardView() {
               color="var(--color-accent)"
               icon={<CircleDollarSign size={21} />}
               label="Ventas de hoy"
-              value={formatMoney(data.metrics.todaySales)}
+               value={formatMoney(data.metrics.todaySales, data.currency)}
               caption={`${data.metrics.todayTransactions} transacciones`}
             /> : null}
             {data.visibility.purchases ? <MetricCard
@@ -132,11 +133,11 @@ export function DashboardView() {
                     <div
                       className="group flex h-full flex-col items-center justify-end"
                       key={item.date}
-                      title={`${item.date}: ${formatMoney(item.total)}`}
+                       title={`${item.date}: ${formatMoney(item.total, data.currency)}`}
                     >
                       <span className="mb-2 hidden text-[10px] font-semibold text-[var(--muted)] group-hover:block md:block">
                         {Number(item.total) > 0
-                          ? `$${Math.round(Number(item.total))}`
+                           ? formatMoney(Math.round(Number(item.total)), data.currency)
                           : "—"}
                       </span>
                       <div
@@ -183,7 +184,7 @@ export function DashboardView() {
                         </p>
                       </div>
                       <p className="text-xs font-semibold">
-                        {formatMoney(product.total)}
+                         {formatMoney(product.total, data.currency)}
                       </p>
                     </div>
                   ))

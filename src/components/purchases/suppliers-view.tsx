@@ -32,6 +32,9 @@ type SupplierPrice = {
   currency: string;
   leadDays: number;
   isPreferred: boolean;
+  allocatedQty?: string | null;
+  totalReceived?: string | null;
+  availableQty?: string | null;
   product: Product;
 };
 type SupplierDetail = Supplier & { productPrices: SupplierPrice[] };
@@ -71,27 +74,28 @@ export function SuppliersView() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     try {
       await apiFetch("/api/suppliers", {
         method: "POST",
         body: JSON.stringify({
-          code: form.get("code"),
-          legalName: form.get("legalName"),
-          tradeName: form.get("tradeName") || null,
-          taxId: form.get("taxId") || null,
-          email: form.get("email") || null,
-          phone: form.get("phone") || null,
-          contactName: form.get("contactName") || null,
-          address: form.get("address") || null,
-          creditDays: form.get("creditDays"),
-          deliveryDays: form.get("deliveryDays"),
-          creditLimit: form.get("creditLimit") || null,
-          paymentTerms: form.get("paymentTerms") || null,
+          code: data.get("code"),
+          legalName: data.get("legalName"),
+          tradeName: data.get("tradeName") || null,
+          taxId: data.get("taxId") || null,
+          email: data.get("email") || null,
+          phone: data.get("phone") || null,
+          contactName: data.get("contactName") || null,
+          address: data.get("address") || null,
+          creditDays: data.get("creditDays"),
+          deliveryDays: data.get("deliveryDays"),
+          creditLimit: data.get("creditLimit") || null,
+          paymentTerms: data.get("paymentTerms") || null,
           active: true
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       setShowForm(false);
       setMessage("Proveedor registrado.");
       setError("");
@@ -144,20 +148,22 @@ export function SuppliersView() {
   async function saveReferencePrice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
-    const form = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     try {
       await apiFetch(`/api/suppliers/${selected.id}/products`, {
         method: "POST",
         body: JSON.stringify({
-          productId: form.get("productId"),
-          supplierSku: form.get("supplierSku") || null,
-          referenceCost: form.get("referenceCost"),
-          currency: form.get("currency"),
-          leadDays: form.get("leadDays"),
-          isPreferred: form.get("isPreferred") === "on"
+          productId: data.get("productId"),
+          supplierSku: data.get("supplierSku") || null,
+          referenceCost: data.get("referenceCost"),
+          currency: data.get("currency"),
+          leadDays: data.get("leadDays"),
+          isPreferred: data.get("isPreferred") === "on",
+          allocatedQty: data.get("allocatedQty") ? Number(data.get("allocatedQty")) : null
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       setMessage("Precio de referencia guardado.");
       await openSupplier(selected.id);
     } catch (err) {
@@ -232,7 +238,7 @@ export function SuppliersView() {
               <X size={18} />
             </button>
           </div>
-          <form className="mt-5" onSubmit={updateSupplier}>
+          <form className="mt-5" key={selected.id} onSubmit={updateSupplier}>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Input defaultValue={selected.code} label="Clave" name="code" required />
               <Input defaultValue={selected.legalName} label="Razón social" name="legalName" required className="xl:col-span-2" />
@@ -262,7 +268,7 @@ export function SuppliersView() {
               Se actualizan también al validar una recepción de compra.
             </p>
             <form
-              className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_160px_150px_110px_110px_auto]"
+              className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
               onSubmit={saveReferencePrice}
             >
               <label>
@@ -276,38 +282,54 @@ export function SuppliersView() {
                   ))}
                 </select>
               </label>
-              <Input label="SKU proveedor" name="supplierSku" />
-              <Input label="Costo referencia" name="referenceCost" min="0" required step="0.01" type="number" />
+              <Input label="SKU proveedor" name="supplierSku" hint="Código del producto que usa el proveedor" />
+              <Input label="Costo referencia" name="referenceCost" min="0" required step="0.01" type="number" hint="Costo estimado en las órdenes de compra" />
               <label>
                 <span className="label">Moneda</span>
                 <select className="field" defaultValue="MXN" name="currency">
                   <option>MXN</option><option>USD</option>
                 </select>
               </label>
-              <Input defaultValue="0" label="Entrega (días)" name="leadDays" min="0" required type="number" />
-              <div className="flex flex-col justify-end gap-2">
-                <label className="flex items-center gap-2 text-xs">
-                  <input name="isPreferred" type="checkbox" /> Preferido
+              <Input defaultValue="0" label="Días de entrega" name="leadDays" min="0" required type="number" hint="Tiempo promedio que tarda en surtir" />
+              <Input label="Cuota de resurtido (máx)" name="allocatedQty" min="0" step="0.001" type="number" placeholder="Sin límite" hint="Límite máximo que el proveedor puede surtir por pedido/periodo" />
+              <div className="flex items-center gap-4 xl:col-span-3 pt-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input name="isPreferred" type="checkbox" /> Proveedor preferido para este producto
                 </label>
-                <button className="btn btn-primary !min-h-9">Guardar</button>
+                <button className="btn btn-primary ml-auto">Guardar precio</button>
               </div>
             </form>
             {selected.productPrices.length ? (
               <div className="table-wrap mt-4 rounded-2xl border border-[var(--border)]">
                 <table className="data-table">
                   <thead>
-                    <tr><th>Producto</th><th>SKU proveedor</th><th>Precio</th><th>Entrega</th><th>Preferencia</th></tr>
+                    <tr><th>Producto</th><th>SKU proveedor</th><th>Precio</th><th>Entrega</th><th>Límite de surtido</th><th>Ya recibido</th><th>Restante (Disp.)</th><th>Preferencia</th></tr>
                   </thead>
                   <tbody>
-                    {selected.productPrices.map((price) => (
-                      <tr key={price.id}>
-                        <td><p className="font-semibold">{price.product.name}</p><p className="text-[11px] text-[var(--muted)]">{price.product.sku}</p></td>
-                        <td>{price.supplierSku || "N/D"}</td>
-                        <td className="font-semibold">{formatMoney(price.referenceCost, price.currency)}</td>
-                        <td>{price.leadDays} días</td>
-                        <td>{price.isPreferred ? <span className="badge !bg-[var(--success-tint)] !text-[var(--success)]">Preferido</span> : "—"}</td>
-                      </tr>
-                    ))}
+                    {selected.productPrices.map((price) => {
+                      const hasQuota = price.allocatedQty != null;
+                      const available = hasQuota ? Number(price.availableQty || 0) : null;
+                      const isLow = available != null && available <= 0;
+                      const isWarning = available != null && available > 0 && available <= Number(price.allocatedQty) * 0.2;
+                      return (
+                        <tr key={price.id}>
+                          <td><p className="font-semibold">{price.product.name}</p><p className="text-[11px] text-[var(--muted)]">{price.product.sku}</p></td>
+                          <td>{price.supplierSku || "N/D"}</td>
+                          <td className="font-semibold">{formatMoney(price.referenceCost, price.currency)}</td>
+                          <td>{price.leadDays} días</td>
+                          <td>{hasQuota ? price.allocatedQty : <span className="text-[var(--muted)]">Sin límite</span>}</td>
+                          <td>{hasQuota ? price.totalReceived : "—"}</td>
+                          <td>
+                            {hasQuota ? (
+                              <span className={`badge ${isLow ? "!bg-[var(--danger-tint)] !text-[var(--danger)]" : isWarning ? "!bg-[var(--warning-tint)] !text-[var(--warning)]" : "!bg-[var(--success-tint)] !text-[var(--success)]"}`}>
+                                {price.availableQty}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td>{price.isPreferred ? <span className="badge !bg-[var(--success-tint)] !text-[var(--success)]">Preferido</span> : "—"}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -380,16 +402,19 @@ function Input({
   label,
   name,
   className,
+  hint,
   ...props
 }: {
   label: string;
   name: string;
   className?: string;
+  hint?: string;
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className={className}>
       <span className="label">{label}</span>
       <input className="field" name={name} {...props} />
+      {hint && <span className="mt-1 block text-[10px] text-[var(--muted)] leading-tight">{hint}</span>}
     </label>
   );
 }

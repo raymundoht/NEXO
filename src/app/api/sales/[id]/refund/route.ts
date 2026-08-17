@@ -13,11 +13,12 @@ import {
   positiveQuantity,
   uuid
 } from "@/lib/validators";
-import { decimal, roundMoney } from "@/lib/money";
+import { roundMoney } from "@/lib/money";
 import { nextFolio } from "@/lib/sequence";
 import { audit } from "@/lib/audit";
 
 const schema = z.object({
+  clientRequestId: uuid,
   mode: z.enum(["REFUND", "CANCEL"]).default("REFUND"),
   reason: z.string().trim().min(10).max(300),
   cashSessionId: uuid.optional(),
@@ -45,8 +46,18 @@ export async function POST(
       input.mode === "CANCEL" ? "sales.cancel" : "sales.refund"
     );
 
-    const refund = await db.$transaction(
+    const result = await db.$transaction(
       async (tx) => {
+        const existing = await tx.refund.findUnique({
+          where: { clientRequestId: input.clientRequestId },
+          include: { items: true }
+        });
+        if (existing) {
+          if (existing.saleId !== id || existing.approvedById !== user.id) {
+            throw new ApiError(409, "El identificador de solicitud ya fue utilizado.");
+          }
+          return { refund: existing, created: false };
+        }
         const [sale, settings] = await Promise.all([
           tx.sale.findUnique({
             where: { id },
@@ -83,12 +94,15 @@ export async function POST(
         const previous = await tx.refundItem.groupBy({
           by: ["saleItemId"],
           where: { saleItemId: { in: sale.items.map((line) => line.id) } },
-          _sum: { quantity: true }
+          _sum: { quantity: true, amount: true }
         });
         const previousMap = new Map(
           previous.map((item) => [
             item.saleItemId,
-            item._sum.quantity || decimal(0)
+            {
+              quantity: Number(item._sum.quantity || 0),
+              amount: item._sum.amount ?? new Prisma.Decimal(0)
+            }
           ])
         );
         const requestedItems =
@@ -96,14 +110,14 @@ export async function POST(
             ? sale.items
                 .map((line) => ({
                   saleItemId: line.id,
-                  quantity: line.quantity.minus(
-                    previousMap.get(line.id) || decimal(0)
+                  quantity: (line.quantity - 
+                    (previousMap.get(line.id)?.quantity || 0)
                   )
                 }))
-                .filter((line) => line.quantity.gt(0))
+                .filter((line) => (line.quantity > 0))
             : input.items.map((item) => ({
                 saleItemId: item.saleItemId,
-                quantity: decimal(item.quantity)
+                quantity: Number(item.quantity)
               }));
         if (!requestedItems.length) {
           throw new ApiError(
@@ -122,24 +136,30 @@ export async function POST(
           if (!line) {
             throw new ApiError(400, "Una partida no pertenece a la venta.");
           }
-          const quantity = decimal(item.quantity);
-          const alreadyRefunded =
-            previousMap.get(line.id) || decimal(0);
-          if (alreadyRefunded.plus(quantity).gt(line.quantity)) {
+          const quantity = Number(item.quantity);
+          const previousRefund = previousMap.get(line.id) || {
+            quantity: 0,
+            amount: new Prisma.Decimal(0)
+          };
+          const alreadyRefunded = previousRefund.quantity;
+          if ((alreadyRefunded + quantity) > line.quantity) {
             throw new ApiError(
               409,
               `El reembolso de ${line.nameSnapshot} supera lo vendido.`
             );
           }
-          const amount = roundMoney(
-            line.lineTotal.div(line.quantity).mul(quantity)
-          );
+          const amount = (alreadyRefunded + quantity) >= line.quantity
+            ? roundMoney(line.lineTotal.minus(previousRefund.amount))
+            : roundMoney(line.lineTotal.div(line.quantity).mul(quantity));
+          if (amount.lte(0)) {
+            throw new ApiError(409, `El importe reembolsable de ${line.nameSnapshot} ya fue agotado.`);
+          }
           return { line, quantity, amount };
         });
         const amount = roundMoney(
           refundLines.reduce(
             (total, line) => total.plus(line.amount),
-            decimal(0)
+            new Prisma.Decimal(0)
           )
         );
 
@@ -153,6 +173,7 @@ export async function POST(
               "Selecciona una sesión de caja abierta para entregar el reembolso."
             );
           }
+          await tx.$executeRaw`SELECT id FROM cash_sessions WHERE id = ${input.cashSessionId}::uuid FOR UPDATE`;
           cashSession = await tx.cashSession.findFirst({
             where: { id: input.cashSessionId, status: "OPEN" }
           });
@@ -169,6 +190,7 @@ export async function POST(
         const folio = await nextFolio(tx, "REFUND", "DEV");
         const created = await tx.refund.create({
           data: {
+            clientRequestId: input.clientRequestId,
             folio,
             saleId: sale.id,
             approvedById: user.id,
@@ -189,13 +211,19 @@ export async function POST(
 
         for (const { line, quantity } of refundLines) {
           const stockBefore = line.product.currentStock;
-          const stockAfter = stockBefore.plus(quantity);
+          const stockAfter = (stockBefore + quantity);
+          const storeStockBefore = line.product.storeStock;
+          const storeStockAfter = (storeStockBefore + quantity);
           const updated = await tx.product.updateMany({
             where: {
               id: line.productId,
-              currentStock: stockBefore
+              currentStock: stockBefore,
+              storeStock: storeStockBefore
             },
-            data: { currentStock: stockAfter }
+            data: { 
+              currentStock: stockAfter,
+              storeStock: storeStockAfter
+            }
           });
           if (updated.count !== 1) {
             throw new ApiError(
@@ -211,9 +239,10 @@ export async function POST(
               quantity,
               stockBefore,
               stockAfter,
-              unitCost: line.product.cost,
+              unitCost: line.unitCostSnapshot,
               referenceType: "Refund",
               referenceId: created.id,
+              idempotencyKey: `${input.clientRequestId}:${line.id}`,
               reason: `Reembolso ${folio} de ${sale.folio}`
             }
           });
@@ -237,10 +266,11 @@ export async function POST(
               cashSessionId: cashSession.id,
               userId: user.id,
               type: "REFUND",
-              amount: baseAmount.negated(),
+              amount: (-baseAmount),
               currency: cashSession.currency,
               referenceType: "Refund",
               referenceId: created.id,
+              idempotencyKey: `refund:${input.clientRequestId}`,
               notes: `Reembolso ${folio} de ${sale.folio}`
             }
           });
@@ -248,11 +278,11 @@ export async function POST(
 
         const allRefunded = sale.items.every((line) => {
           const prior =
-            previousMap.get(line.id) || decimal(0);
+            previousMap.get(line.id)?.quantity || Number(0);
           const current =
             refundLines.find((item) => item.line.id === line.id)?.quantity ||
-            decimal(0);
-          return prior.plus(current).gte(line.quantity);
+            Number(0);
+          return (prior + current) >= line.quantity;
         });
         await tx.sale.update({
           where: { id: sale.id },
@@ -265,26 +295,29 @@ export async function POST(
                   : SaleStatus.PARTIALLY_REFUNDED
           }
         });
-        return created;
+        return { refund: created, created: true };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );
+    const refund = result.refund;
 
-    const metadata = await requestMetadata();
-    await audit({
-      userId: user.id,
-      action: input.mode === "CANCEL" ? "SALE_CANCELLED" : "SALE_REFUNDED",
-      entityType: "Refund",
-      entityId: refund.id,
-      ip: metadata.ip,
-      metadata: {
-        saleId: id,
-        folio: refund.folio,
-        amount: refund.amount.toString(),
-        mode: input.mode
-      }
-    });
-    return jsonOk(refund, 201);
+    if (result.created) {
+      const metadata = await requestMetadata();
+      await audit({
+        userId: user.id,
+        action: input.mode === "CANCEL" ? "SALE_CANCELLED" : "SALE_REFUNDED",
+        entityType: "Refund",
+        entityId: refund.id,
+        ip: metadata.ip,
+        metadata: {
+          saleId: id,
+          folio: refund.folio,
+          amount: refund.amount.toString(),
+          mode: input.mode
+        }
+      });
+    }
+    return jsonOk(refund, result.created ? 201 : 200);
   } catch (error) {
     return jsonError(error);
   }

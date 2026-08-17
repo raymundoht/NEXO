@@ -5,20 +5,29 @@ import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
 import { audit } from "@/lib/audit";
 
-const schema = z.object({
-  businessName: z.string().trim().min(2).max(180),
-  taxId: z.string().trim().max(30).optional().nullable(),
-  address: z.string().trim().max(1000).optional().nullable(),
-  phone: z.string().trim().max(40).optional().nullable(),
-  baseCurrency: z.string().regex(/^[A-Z]{3}$/),
-  allowedCurrencies: z
-    .array(z.string().regex(/^[A-Z]{3}$/))
-    .min(1)
-    .max(10),
-  defaultTaxRate: z.coerce.number().min(0).max(100),
-  maxCashierDiscountRate: z.coerce.number().min(0).max(100),
-  ticketFooter: z.string().trim().max(300).optional().nullable()
-});
+const schema = z
+  .object({
+    businessName: z.string().trim().min(2).max(180),
+    taxId: z.string().trim().max(30).optional().nullable(),
+    address: z.string().trim().max(1000).optional().nullable(),
+    phone: z.string().trim().max(40).optional().nullable(),
+    baseCurrency: z.enum(["MXN", "USD"]),
+    allowedCurrencies: z
+      .array(z.enum(["MXN", "USD"]))
+      .min(1)
+      .max(2)
+      .refine(
+        (currencies) => new Set(currencies).size === currencies.length,
+        "No repitas monedas habilitadas."
+      ),
+    defaultTaxRate: z.coerce.number().min(0).max(100),
+    maxCashierDiscountRate: z.coerce.number().min(0).max(100),
+    ticketFooter: z.string().trim().max(300).optional().nullable()
+  })
+  .refine((input) => input.allowedCurrencies.includes(input.baseCurrency), {
+    path: ["allowedCurrencies"],
+    message: "La moneda base debe estar habilitada."
+  });
 
 export async function GET() {
   try {
@@ -39,9 +48,6 @@ export async function PATCH(request: Request) {
     assertTrustedOrigin(request);
     const user = await requirePermission("settings.manage");
     const input = schema.parse(await readJson(request));
-    if (!input.allowedCurrencies.includes(input.baseCurrency)) {
-      input.allowedCurrencies.unshift(input.baseCurrency);
-    }
     const settings = await db.businessSettings.upsert({
       where: { id: 1 },
       create: {

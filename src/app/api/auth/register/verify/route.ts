@@ -8,6 +8,7 @@ import {
   clientIp,
   hashIdentifier,
   hashOneTimeCode,
+  hashToken,
   safeHashMatches
 } from "@/lib/security";
 import {
@@ -17,6 +18,7 @@ import {
 
 const schema = z.object({
   challengeId: z.string().uuid(),
+  continuationToken: z.string().min(40).max(100),
   code: z.string().regex(/^\d{6}$/)
 });
 
@@ -46,6 +48,9 @@ export async function POST(request: Request) {
         "El código venció. Solicita uno nuevo.",
         "VERIFICATION_EXPIRED"
       );
+    }
+    if (!safeHashMatches(hashToken(input.continuationToken), pending.continuationHash)) {
+      throw new ApiError(404, "El registro ya no está disponible.", "NOT_FOUND");
     }
     if (pending.attempts >= REGISTRATION_MAX_ATTEMPTS) {
       throw new ApiError(

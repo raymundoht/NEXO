@@ -5,11 +5,19 @@ import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
 import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
 import { audit } from "@/lib/audit";
-import { decimal } from "@/lib/money";
+import { } from "@/lib/money";
 
 const schema = z.object({
   productId: z.string().uuid(),
-  quantity: z.coerce.number().min(-1_000_000).max(1_000_000).refine((v) => v !== 0),
+  quantity: z.coerce
+    .number()
+    .min(-1_000_000)
+    .max(1_000_000)
+    .refine((value) => value !== 0)
+    .refine(
+      (value) => Math.abs(value * 1000 - Math.round(value * 1000)) < 1e-7,
+      "La cantidad admite hasta tres decimales."
+    ),
   reason: z.string().trim().min(10).max(300)
 });
 
@@ -20,19 +28,41 @@ export async function POST(request: Request) {
     const input = schema.parse(await readJson(request));
     const movement = await db.$transaction(
       async (tx) => {
+        await tx.$executeRaw`SELECT id FROM products WHERE id = ${input.productId}::uuid FOR UPDATE`;
         const product = await tx.product.findUnique({
           where: { id: input.productId }
         });
         if (!product) throw new ApiError(404, "Producto no encontrado.");
-        const quantity = decimal(input.quantity);
-        const stockAfter = product.currentStock.plus(quantity);
-        if (stockAfter.lt(0) && !product.allowNegative) {
+        const quantity = Number(input.quantity);
+        const stockAfter = (product.currentStock + quantity);
+        if ((stockAfter < 0) && !product.allowNegative) {
           throw new ApiError(409, "El ajuste dejaría existencias negativas.");
         }
-        await tx.product.update({
-          where: { id: product.id },
+        if (quantity < 0 && !product.allowNegative) {
+          const reservations = await tx.stockReservation.aggregate({
+            where: {
+              productId: product.id,
+              consumedAt: null,
+              releasedAt: null,
+              expiresAt: { gt: new Date() }
+            },
+            _sum: { quantity: true }
+          });
+          const reserved = Number(reservations._sum.quantity || 0);
+          if ((stockAfter < reserved)) {
+            throw new ApiError(
+              409,
+              "El ajuste consumiría existencias reservadas para un pago en proceso."
+            );
+          }
+        }
+        const updated = await tx.product.updateMany({
+          where: { id: product.id, currentStock: product.currentStock },
           data: { currentStock: stockAfter }
         });
+        if (updated.count !== 1) {
+          throw new ApiError(409, "Las existencias del producto cambiaron concurrentemente. Intenta de nuevo.");
+        }
         return tx.stockMovement.create({
           data: {
             productId: product.id,

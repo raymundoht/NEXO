@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { LockKeyhole, WalletCards } from "lucide-react";
+import { LockKeyhole, Plus, WalletCards } from "lucide-react";
 import { apiFetch, formatDate, formatMoney } from "@/lib/client-api";
 import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
@@ -45,6 +45,10 @@ export function CashView() {
   const [loading, setLoading] = useState(true);
   const [openingCurrency, setOpeningCurrency] = useState("MXN");
   const [allowedCurrencies, setAllowedCurrencies] = useState(["MXN"]);
+  const [newRegisterCode, setNewRegisterCode] = useState("");
+  const [newRegisterName, setNewRegisterName] = useState("");
+  const [creatingRegister, setCreatingRegister] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [openingDenominations, setOpeningDenominations] =
     useState<DenominationCounts>(() => emptyDenominationCounts("MXN"));
   const [closingDenominations, setClosingDenominations] =
@@ -89,6 +93,11 @@ export function CashView() {
   const currentSession = useMemo(
     () => sessions.find((session) => session.status === "OPEN" && session.cashier.id === user.id),
     [sessions, user.id]
+  );
+
+  const allOpenSessions = useMemo(
+    () => sessions.filter((session) => session.status === "OPEN"),
+    [sessions]
   );
 
   useEffect(() => {
@@ -143,20 +152,45 @@ export function CashView() {
     }
   }
 
+  async function createRegister(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreatingRegister(true);
+    setError("");
+    try {
+      await apiFetch("/api/cash-registers", {
+        method: "POST",
+        body: JSON.stringify({
+          code: newRegisterCode.trim().toUpperCase(),
+          name: newRegisterName.trim()
+        })
+      });
+      setNewRegisterCode("");
+      setNewRegisterName("");
+      setShowCreateForm(false);
+      setMessage("Caja creada correctamente.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No fue posible crear la caja.");
+    } finally {
+      setCreatingRegister(false);
+    }
+  }
+
   async function movement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentSession) return;
-    const form = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     try {
       await apiFetch(`/api/cash-sessions/${currentSession.id}/movements`, {
         method: "POST",
         body: JSON.stringify({
-          type: form.get("type"),
-          amount: form.get("amount"),
-          notes: form.get("notes")
+          type: data.get("type"),
+          amount: data.get("amount"),
+          notes: data.get("notes")
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       setMessage("Movimiento de efectivo registrado.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible registrar.");
@@ -219,14 +253,58 @@ export function CashView() {
           </form>
         </div>
       ) : (
-        <form className="card max-w-2xl p-5 md:p-6" onSubmit={openSession}>
-          <div className="flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--primary-tint)] text-[var(--primary)]"><WalletCards size={21} /></span>
-            <div><h2 className="font-semibold">Abrir sesión de caja</h2><p className="text-xs text-[var(--muted)]">Selecciona la terminal y registra el fondo inicial.</p></div>
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <label><span className="label">Caja</span><select className="field" name="cashRegisterId" required><option value="">Seleccionar</option>{registers.filter((register) => !register.sessions.length).map((register) => <option key={register.id} value={register.id}>{register.code} · {register.name}</option>)}</select></label>
-            <label><span className="label">Moneda</span><select className="field" value={openingCurrency} onChange={(event) => { setOpeningCurrency(event.target.value); setOpeningDenominations(emptyDenominationCounts(event.target.value)); }}>{allowedCurrencies.map((currency) => <option key={currency}>{currency}</option>)}</select></label>
+        <div className="space-y-5">
+          {registers.length === 0 && !loading && (
+            <div className="card border-[var(--warning)]/30 bg-[var(--warning-tint)] p-5">
+              <p className="text-sm font-semibold text-[var(--warning)]">No hay cajas registradas</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Un administrador debe crear al menos una caja antes de poder abrir sesiones.
+              </p>
+              {user.permissions.includes("settings.manage") && (
+                <div className="mt-3">
+                  {!showCreateForm ? (
+                    <button className="btn btn-secondary !text-xs" onClick={() => setShowCreateForm(true)} type="button">
+                      <Plus size={14} /> Crear caja
+                    </button>
+                  ) : (
+                    <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={createRegister}>
+                      <input className="field !h-9 text-xs" maxLength={40} onChange={(e) => setNewRegisterCode(e.target.value)} placeholder="Código (ej: CAJA-01)" required value={newRegisterCode} />
+                      <input className="field !h-9 text-xs" maxLength={120} onChange={(e) => setNewRegisterName(e.target.value)} placeholder="Nombre (ej: Caja principal)" required value={newRegisterName} />
+                      <button className="btn btn-primary !h-9 !text-xs" disabled={creatingRegister} type="submit">
+                        {creatingRegister ? "Creando..." : "Crear"}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <form className="card max-w-2xl p-5 md:p-6" onSubmit={openSession}>
+            <div className="flex items-center gap-3">
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--primary-tint)] text-[var(--primary)]"><WalletCards size={21} /></span>
+              <div><h2 className="font-semibold">Abrir sesión de caja</h2><p className="text-xs text-[var(--muted)]">Selecciona la terminal y registra el fondo inicial.</p></div>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label>
+                <span className="label">Caja</span>
+                <select className="field" name="cashRegisterId" required>
+                  <option value="">— Selecciona una caja —</option>
+                  {registers.filter((register) => !register.sessions.length).map((register) => (
+                    <option key={register.id} value={register.id}>{register.code} — {register.name}</option>
+                  ))}
+                </select>
+                {registers.length === 0 && !loading && (
+                  <p className="mt-1 text-[11px] text-[var(--muted)]">No hay cajas registradas. Un administrador debe crear una.</p>
+                )}
+                {registers.length > 0 && registers.every((r) => r.sessions.length > 0) && (
+                  <p className="mt-1 text-[11px] text-[var(--warning)]">Todas las cajas ya tienen una sesión abierta. Cierra una antes de abrir otra.</p>
+                )}
+                {registers.filter((r) => !r.sessions.length).length === 0 && registers.some((r) => r.sessions.length > 0) && !registers.every((r) => r.sessions.length > 0) && (
+                  <p className="mt-1 text-[11px] text-[var(--muted)]">Solo se muestran cajas disponibles (sin sesión abierta).</p>
+                )}
+              </label>
+              <label><span className="label">Moneda</span><select className="field" value={openingCurrency} onChange={(event) => { setOpeningCurrency(event.target.value); setOpeningDenominations(emptyDenominationCounts(event.target.value)); }}>{allowedCurrencies.map((currency) => <option key={currency}>{currency}</option>)}</select></label>
             <div className="md:col-span-2">
               <DenominationCounter
                 counts={openingDenominations}
@@ -246,6 +324,48 @@ export function CashView() {
           </div>
           <div className="mt-5 flex justify-end"><button className="btn btn-primary">Abrir caja</button></div>
         </form>
+        </div>
+      )}
+
+      {allOpenSessions.length > 0 && !currentSession && (
+        <div className="card border-[var(--warning)]/30 bg-[var(--warning-tint)] p-5">
+          <p className="text-sm font-semibold text-[var(--warning)]">Sesiones de caja abiertas</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            Estas sesiones están bloqueando cajas. Sólo un administrador puede cerrar una sesión ajena.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {allOpenSessions.map((session) => (
+              <div key={session.id} className="flex items-center justify-between gap-2 rounded-xl bg-[var(--surface)] border border-[var(--border)] p-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold truncate">{session.cashRegister.code} — {session.cashRegister.name}</p>
+                  <p className="text-[10px] text-[var(--muted)]">{session.cashier.name} · {formatMoney(session.openingAmount, session.currency)}</p>
+                </div>
+                {user.role === "ADMIN" && session.cashier.id !== user.id && (
+                  <button
+                    className="btn btn-secondary !min-h-7 !px-2 !py-0.5 !text-[10px]"
+                    onClick={async () => {
+                      if (!confirm(`¿Cerrar la caja ${session.cashRegister.code} de ${session.cashier.name}?`)) return;
+                      try {
+                        await apiFetch(`/api/cash-sessions/${session.id}/force-close`, {
+                          method: "POST"
+                        });
+                        setMessage(`Sesión de ${session.cashier.name} cerrada.`);
+                        await load();
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "No fue posible cerrar.");
+                      }
+                    }}
+                  >
+                    Cerrar
+                  </button>
+                )}
+                {session.cashier.id === user.id && (
+                  <span className="text-[10px] font-semibold text-[var(--success)]">Tu sesión</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       <section className="card overflow-hidden">
@@ -306,7 +426,7 @@ function DenominationCounter({
                 }
                 step="1"
                 type="number"
-                value={count}
+                value={count || ""}
               />
               <span className="text-right text-[var(--muted)]">
                 {formatMoney(denomination * count, currency)}

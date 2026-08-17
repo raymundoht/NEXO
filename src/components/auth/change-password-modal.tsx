@@ -25,7 +25,8 @@ export function ChangePasswordModal({
     event.preventDefault();
     setError("");
     setMessage("");
-    const form = new FormData(event.currentTarget);
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
     const newPassword = form.get("newPassword") as string;
     const confirmPassword = form.get("confirmPassword") as string;
 
@@ -47,7 +48,7 @@ export function ChangePasswordModal({
         }
       );
       setMessage(result.message);
-      event.currentTarget.reset();
+      formEl.reset();
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "No fue posible cambiar la contraseña."

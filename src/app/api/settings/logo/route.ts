@@ -1,84 +1,63 @@
 import { db } from "@/lib/db";
-import { jsonError, jsonOk } from "@/lib/api";
+import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
 import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin } from "@/lib/security";
 import { audit } from "@/lib/audit";
 import { writeFile, unlink, mkdir } from "fs/promises";
-import { existsSync } from "fs";
-import path from "path";
+import { randomUUID } from "crypto";
+import { z } from "zod";
+import {
+  BRANDING_UPLOAD_DIR,
+  detectBrandingImage,
+  resolveStoredBrandingPath
+} from "@/lib/branding";
 
-const UPLOAD_DIR = path.join(process.cwd(), "public", "uploads", "branding");
 const MAX_SIZE = 2 * 1024 * 1024; // 2MB
-const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+const MAX_MULTIPART_SIZE = MAX_SIZE + 128 * 1024;
 
 async function ensureDir() {
-  if (!existsSync(UPLOAD_DIR)) {
-    await mkdir(UPLOAD_DIR, { recursive: true });
-  }
+  await mkdir(BRANDING_UPLOAD_DIR, { recursive: true });
 }
 
-/**
- * Resolve a stored branding URL to a safe absolute path.
- * Returns null if the path escapes the branding upload directory.
- */
-function resolveBrandingPath(publicUrl: string): string | null {
-  const normalized = publicUrl.replace(/\\/g, "/");
-  if (!normalized.startsWith("/uploads/branding/")) {
-    return null;
-  }
-
-  const resolved = path.resolve(process.cwd(), "public", `.${normalized}`);
-  const uploadRoot = `${path.resolve(UPLOAD_DIR)}${path.sep}`;
-  return resolved.startsWith(uploadRoot) ? resolved : null;
-}
-
-/**
- * Safely delete a previously uploaded branding file.
- * Refuses to unlink paths outside the branding directory.
- */
-async function deleteBrandingFile(publicUrl: string | null | undefined) {
-  if (!publicUrl) return;
-
-  const safePath = resolveBrandingPath(publicUrl);
-  if (safePath && existsSync(safePath)) {
-    await unlink(safePath).catch(() => {});
-  }
+async function removeStoredBranding(url: string | null) {
+  const filepath = resolveStoredBrandingPath(url);
+  if (filepath) await unlink(filepath).catch(() => {});
 }
 
 export async function POST(request: Request) {
   try {
     assertTrustedOrigin(request);
-    await requirePermission("settings.appearance");
+    const user = await requirePermission("settings.appearance");
 
     const contentType = request.headers.get("content-type") || "";
     if (!contentType.includes("multipart/form-data")) {
-      return jsonError({ statusCode: 400, message: "Se esperaba un formulario multipart." });
+      throw new ApiError(400, "Se esperaba un formulario multipart.");
+    }
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_MULTIPART_SIZE) {
+      throw new ApiError(413, "El archivo supera 2MB.", "PAYLOAD_TOO_LARGE");
     }
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const type = formData.get("type") as string; // "logo" or "favicon"
+    const type = z.enum(["logo", "favicon"]).parse(formData.get("type"));
 
-    if (!file) {
-      return jsonError({ statusCode: 400, message: "No se proporcionó archivo." });
+    if (!(file instanceof File)) {
+      throw new ApiError(400, "No se proporcionó archivo.");
     }
 
     if (file.size > MAX_SIZE) {
-      return jsonError({ statusCode: 400, message: "El archivo supera 2MB." });
-    }
-
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      return jsonError({ statusCode: 400, message: "Tipo de archivo no permitido." });
+      throw new ApiError(413, "El archivo supera 2MB.", "PAYLOAD_TOO_LARGE");
     }
 
     await ensureDir();
 
-    const ext = file.name.split(".").pop() || "png";
-    const filename = `${type === "favicon" ? "favicon" : "logo"}-${Date.now()}.${ext}`;
-    const filepath = path.join(UPLOAD_DIR, filename);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const image = detectBrandingImage(buffer);
+    const filename = `${type}-${randomUUID()}.${image.extension}`;
+    const filepath = resolveStoredBrandingPath(`/uploads/branding/${filename}`)!;
     const publicUrl = `/uploads/branding/${filename}`;
 
-    const buffer = Buffer.from(await file.arrayBuffer());
     await writeFile(filepath, buffer);
 
     // Delete old file if exists
@@ -90,22 +69,25 @@ export async function POST(request: Request) {
     });
 
     const oldUrl = type === "favicon" ? settings.faviconUrl : settings.logoUrl;
-    await deleteBrandingFile(oldUrl);
-
-    await db.businessSettings.update({
-      where: { id: 1 },
-      data: { [field]: publicUrl }
-    });
+    try {
+      await db.businessSettings.update({
+        where: { id: 1 },
+        data: { [field]: publicUrl }
+      });
+    } catch (error) {
+      await unlink(filepath).catch(() => {});
+      throw error;
+    }
+    await removeStoredBranding(oldUrl);
 
     const metadata = await requestMetadata();
-    const user = await requirePermission("settings.appearance");
     await audit({
       userId: user.id,
       action: "BRANDING_UPDATED",
       entityType: "BusinessSettings",
       entityId: "1",
       ip: metadata.ip,
-      metadata: { type, filename }
+      metadata: { type, filename, mime: image.mime }
     });
 
     return jsonOk({ url: publicUrl });
@@ -118,7 +100,9 @@ export async function DELETE(request: Request) {
   try {
     assertTrustedOrigin(request);
     const user = await requirePermission("settings.appearance");
-    const { type } = (await request.json()) as { type: "logo" | "favicon" };
+    const { type } = z
+      .object({ type: z.enum(["logo", "favicon"]) })
+      .parse(await readJson(request));
 
     const field = type === "favicon" ? "faviconUrl" : "logoUrl";
     const settings = await db.businessSettings.upsert({
@@ -128,12 +112,11 @@ export async function DELETE(request: Request) {
     });
 
     const oldUrl = type === "favicon" ? settings.faviconUrl : settings.logoUrl;
-    await deleteBrandingFile(oldUrl);
-
     await db.businessSettings.update({
       where: { id: 1 },
       data: { [field]: null }
     });
+    await removeStoredBranding(oldUrl);
 
     const metadata = await requestMetadata();
     await audit({

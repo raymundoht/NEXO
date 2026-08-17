@@ -105,6 +105,8 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     void db.session.update({
       where: { id: session.id },
       data: { lastSeenAt: new Date() }
+    }).catch((error) => {
+      console.error("No fue posible actualizar la actividad de la sesión.", error);
     });
   }
 

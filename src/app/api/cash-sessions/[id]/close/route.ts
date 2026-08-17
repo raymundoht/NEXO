@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
 import { requirePermission, requestMetadata } from "@/lib/auth";
 import { assertTrustedOrigin, sanitizeText } from "@/lib/security";
-import { decimal, roundMoney } from "@/lib/money";
+import { roundMoney } from "@/lib/money";
 import { audit } from "@/lib/audit";
 import {
   denominationTotal,
@@ -43,6 +43,7 @@ export async function POST(
     }
     const closed = await db.$transaction(
       async (tx) => {
+        await tx.$executeRaw`SELECT id FROM cash_sessions WHERE id = ${id}::uuid FOR UPDATE`;
         const session = await tx.cashSession.findFirst({
           where: {
             id,
@@ -52,6 +53,19 @@ export async function POST(
         });
         if (!session) {
           throw new ApiError(404, "Sesión de caja abierta no encontrada.");
+        }
+        const activePayment = await tx.paymentAttempt.findFirst({
+          where: {
+            cashSessionId: id,
+            status: { in: ["PENDING", "PROCESSING", "REVIEW_REQUIRED"] }
+          },
+          select: { id: true }
+        });
+        if (activePayment) {
+          throw new ApiError(
+            409,
+            "La caja tiene un pago con tarjeta pendiente de conciliación. Resuélvelo antes de cerrar."
+          );
         }
         if (!supportsCashDenominations(session.currency)) {
           throw new ApiError(
@@ -76,23 +90,23 @@ export async function POST(
           where: { cashSessionId: id, currency: session.currency },
           _sum: { amount: true }
         });
-        const expected = roundMoney(aggregate._sum.amount || decimal(0));
-        const counted = roundMoney(decimal(input.countedAmount));
+        const expected = roundMoney(aggregate._sum.amount ?? new Prisma.Decimal(0));
+        const counted = roundMoney(new Prisma.Decimal(input.countedAmount));
         const difference = counted.minus(expected);
         await tx.cashMovement.create({
           data: {
             cashSessionId: id,
             userId: user.id,
             type: "CLOSING",
-            amount: decimal(0),
+            amount: Number(0),
             currency: session.currency,
             referenceType: "CashSession",
             referenceId: id,
             notes: "Cierre de caja"
           }
         });
-        return tx.cashSession.update({
-          where: { id },
+        const updated = await tx.cashSession.updateMany({
+          where: { id, status: "OPEN" },
           data: {
             status: "CLOSED",
             expectedClosingAmount: expected,
@@ -103,6 +117,10 @@ export async function POST(
             closedAt: new Date()
           }
         });
+        if (updated.count !== 1) {
+          throw new ApiError(409, "La sesión de caja ya fue cerrada.");
+        }
+        return tx.cashSession.findUniqueOrThrow({ where: { id } });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );

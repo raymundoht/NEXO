@@ -4,7 +4,9 @@ import { ApiError, jsonError, jsonOk, readJson } from "@/lib/api";
 import {
   assertTrustedOrigin,
   generateNumericCode,
-  hashOneTimeCode
+  hashOneTimeCode,
+  hashToken,
+  safeHashMatches
 } from "@/lib/security";
 import { sendRegistrationCodeEmail, verifyEmailDelivery } from "@/lib/mailer";
 import {
@@ -13,7 +15,10 @@ import {
   selfRegistrationEnabled
 } from "@/lib/registration";
 
-const schema = z.object({ challengeId: z.string().uuid() });
+const schema = z.object({
+  challengeId: z.string().uuid(),
+  continuationToken: z.string().min(40).max(100)
+});
 
 export async function POST(request: Request) {
   try {
@@ -36,6 +41,9 @@ export async function POST(request: Request) {
     if (!pending) {
       throw new ApiError(404, "El registro ya no está disponible.", "NOT_FOUND");
     }
+    if (!safeHashMatches(hashToken(input.continuationToken), pending.continuationHash)) {
+      throw new ApiError(404, "El registro ya no está disponible.", "NOT_FOUND");
+    }
     const now = new Date();
     if (pending.resendAt > now) {
       const seconds = Math.ceil((pending.resendAt.getTime() - now.getTime()) / 1000);
@@ -50,8 +58,12 @@ export async function POST(request: Request) {
     const codeHash = hashOneTimeCode(pending.id, code);
     const expiresAt = new Date(now.getTime() + REGISTRATION_CODE_TTL_MS);
     const resendAt = new Date(now.getTime() + REGISTRATION_RESEND_MS);
-    await db.registrationVerification.update({
-      where: { id: pending.id },
+    const claimed = await db.registrationVerification.updateMany({
+      where: {
+        id: pending.id,
+        codeHash: pending.codeHash,
+        resendAt: { lte: now }
+      },
       data: {
         codeHash,
         attempts: 0,
@@ -60,6 +72,12 @@ export async function POST(request: Request) {
         lastSentAt: now
       }
     });
+    if (claimed.count !== 1) {
+      throw new ApiError(
+        429,
+        "El código ya fue reenviado. Espera antes de intentar otra vez."
+      );
+    }
 
     try {
       await sendRegistrationCodeEmail({

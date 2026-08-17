@@ -7,7 +7,20 @@ export const currency = z
   .trim()
   .toUpperCase()
   .regex(/^[A-Z]{3}$/);
-export const positiveQuantity = z.coerce.number().positive().max(1_000_000);
+const hasAtMostThreeDecimals = (value: number) =>
+  Number.isFinite(value) &&
+  Math.abs(value * 1000 - Math.round(value * 1000)) < 1e-7;
+
+export const positiveQuantity = z.coerce
+  .number()
+  .positive()
+  .max(1_000_000)
+  .refine(hasAtMostThreeDecimals, "La cantidad admite hasta tres decimales.");
+export const nonNegativeQuantity = z.coerce
+  .number()
+  .min(0)
+  .max(1_000_000)
+  .refine(hasAtMostThreeDecimals, "La cantidad admite hasta tres decimales.");
 export const nonNegativeMoney = z.coerce.number().min(0).max(1_000_000_000);
 export const cardAuthorization = z
   .string()

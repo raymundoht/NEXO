@@ -15,7 +15,8 @@ export default function ERPError({
         </div>
         <h1 className="text-xl font-bold text-[var(--color-text)]">Error en el módulo</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          {error.message || "Ocurrió un error al cargar esta sección."}
+          Ocurrió un error al cargar esta sección.
+          {error.digest ? ` Referencia: ${error.digest}.` : ""}
         </p>
         <button
           onClick={reset}

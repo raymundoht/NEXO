@@ -10,6 +10,3 @@ coverage
 .DS_Store
 prisma/*.db
 prisma/*.db-journal
-strix_runs/
-strix.log
-upload/

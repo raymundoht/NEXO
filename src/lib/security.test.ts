@@ -67,4 +67,17 @@ describe("protección de origen", () => {
     });
     expect(() => assertTrustedOrigin(request)).toThrow();
   });
+
+  it("bloquea esquemas distintos y orígenes malformados", () => {
+    const insecure = new Request("https://erp.example.com/api/products", {
+      method: "POST",
+      headers: { origin: "http://erp.example.com", host: "erp.example.com" }
+    });
+    const malformed = new Request("https://erp.example.com/api/products", {
+      method: "POST",
+      headers: { origin: "no-es-url", host: "erp.example.com" }
+    });
+    expect(() => assertTrustedOrigin(insecure)).toThrow();
+    expect(() => assertTrustedOrigin(malformed)).toThrow();
+  });
 });

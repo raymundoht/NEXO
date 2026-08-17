@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { ArrowLeftRight, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowLeftRight, PackagePlus, PackageMinus, Search, SlidersHorizontal } from "lucide-react";
 import { apiFetch, formatDate, formatMoney } from "@/lib/client-api";
 import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
@@ -83,17 +83,21 @@ export function InventoryMovementsView() {
 
   async function adjust(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const type = data.get("adjustmentType") as string;
+    const rawQty = Number(data.get("quantity"));
+    const quantity = type === "EXIT" ? -rawQty : rawQty;
     try {
       await apiFetch("/api/inventory/adjustments", {
         method: "POST",
         body: JSON.stringify({
-          productId: form.get("productId"),
-          quantity: form.get("quantity"),
-          reason: form.get("reason")
+          productId: data.get("productId"),
+          quantity,
+          reason: data.get("reason")
         })
       });
-      event.currentTarget.reset();
+      form.reset();
       setMessage("Ajuste registrado en el kardex y en la bitácora.");
       setError("");
       await load();
@@ -124,50 +128,83 @@ export function InventoryMovementsView() {
       <Notice message={message} type="success" />
 
       {canAdjust ? (
-        <form className="card p-5 md:p-6" onSubmit={adjust}>
+        <div className="card p-5 md:p-6">
           <div className="flex items-center gap-3">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--primary-tint)] text-[var(--primary)]">
               <ArrowLeftRight size={19} />
             </span>
             <div>
-              <h2 className="font-semibold">Ajuste periódico auditado</h2>
+              <h2 className="font-semibold">Ajuste de inventario</h2>
               <p className="text-xs text-[var(--muted)]">
-                Usa cantidad positiva para entrada y negativa para salida.
+                Registra entradas o salidas de producto con un motivo auditado.
               </p>
             </div>
           </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_180px_1.4fr_auto]">
-            <label>
-              <span className="label">Producto</span>
-              <select className="field" name="productId" required>
-                <option value="">Seleccionar</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.sku} · {product.name} ({product.currentStock}{" "}
-                    {product.unit})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="label">Variación</span>
-              <input
-                className="field"
-                name="quantity"
-                required
-                step="0.001"
-                type="number"
-              />
-            </label>
-            <label>
-              <span className="label">Motivo (mínimo 10 caracteres)</span>
-              <input className="field" minLength={10} name="reason" required />
-            </label>
-            <button className="btn btn-primary self-end">
-              Registrar ajuste
-            </button>
-          </div>
-        </form>
+          <form className="mt-5" onSubmit={adjust}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="md:col-span-2">
+                <span className="label">Producto</span>
+                <select className="field" name="productId" required>
+                  <option value="">Seleccionar producto</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.sku} · {product.name} ({product.currentStock} {product.unit})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="md:col-span-2">
+                <span className="label">Tipo de ajuste</span>
+                <div className="mt-1.5 grid grid-cols-2 gap-3">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-[var(--border)] p-4 transition has-[:checked]:border-[var(--success)] has-[:checked]:bg-[var(--success-tint)]">
+                    <input className="sr-only" name="adjustmentType" required type="radio" value="ENTRY" />
+                    <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--success-tint)] text-[var(--success)]">
+                      <PackagePlus size={20} />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--success)]">Entrada</p>
+                      <p className="text-[10px] text-[var(--muted)]">Recepción, devolución, reposición</p>
+                    </div>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-[var(--border)] p-4 transition has-[:checked]:border-[var(--danger)] has-[:checked]:bg-[var(--danger-tint)]">
+                    <input className="sr-only" name="adjustmentType" type="radio" value="EXIT" />
+                    <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--danger-tint)] text-[var(--danger)]">
+                      <PackageMinus size={20} />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--danger)]">Salida</p>
+                      <p className="text-[10px] text-[var(--muted)]">Daño, merma, vencimiento</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <label>
+                <span className="label">Cantidad</span>
+                <input
+                  className="field"
+                  min="1"
+                  name="quantity"
+                  placeholder="1"
+                  required
+                  step="1"
+                  type="number"
+                />
+                <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">Solo cantidades enteras (1, 2, 3...).</span>
+              </label>
+
+              <label>
+                <span className="label">Motivo (mínimo 10 caracteres)</span>
+                <input className="field" minLength={10} name="reason" placeholder="Ej: Recepción de compra PO-001" required />
+                <span className="mt-0.5 block text-[10px] leading-tight text-[var(--muted)]">Describe el motivo para trazabilidad.</span>
+              </label>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button className="btn btn-primary">Registrar ajuste</button>
+            </div>
+          </form>
+        </div>
       ) : null}
 
       <section className="card overflow-hidden">

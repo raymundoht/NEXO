@@ -1,7 +1,9 @@
 import { Prisma, StockMovementType } from "@prisma/client";
+import { z } from "zod";
 import { db } from "@/lib/db";
-import { getPagination, jsonError, jsonOk } from "@/lib/api";
+import { ApiError, getPagination, jsonError, jsonOk } from "@/lib/api";
 import { requirePermission } from "@/lib/auth";
+import { parseBusinessDate } from "@/lib/export";
 
 export async function GET(request: Request) {
   try {
@@ -12,16 +14,27 @@ export async function GET(request: Request) {
     const type = searchParams.get("type") as StockMovementType | null;
     const from = searchParams.get("from");
     const to = searchParams.get("to");
+    if (productId && !z.string().uuid().safeParse(productId).success) {
+      throw new ApiError(400, "El producto seleccionado es inválido.");
+    }
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
+    try {
+      fromDate = from ? parseBusinessDate(from) : undefined;
+      toDate = to ? parseBusinessDate(to, true) : undefined;
+    } catch {
+      throw new ApiError(400, "El rango de fechas es inválido.");
+    }
     const where: Prisma.StockMovementWhereInput = {
       ...(productId ? { productId } : {}),
       ...(type && Object.values(StockMovementType).includes(type)
         ? { type }
         : {}),
-      ...(from || to
+      ...(fromDate || toDate
         ? {
             createdAt: {
-              ...(from ? { gte: new Date(from) } : {}),
-              ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {})
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {})
             }
           }
         : {})
@@ -33,7 +46,7 @@ export async function GET(request: Request) {
           product: { select: { id: true, sku: true, name: true } },
           user: { select: { id: true, name: true } }
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip,
         take
       }),
